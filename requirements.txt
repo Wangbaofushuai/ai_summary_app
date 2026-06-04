@@ -1,0 +1,10 @@
+streamlit
+httpx
+playwright
+openai
+APScheduler
+python-docx
+markdown
+pymupdf
+pandas
+openpyxl

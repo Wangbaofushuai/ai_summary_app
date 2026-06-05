@@ -11,6 +11,14 @@ if [ ! -d ".venv" ]; then
 fi
 source .venv/bin/activate
 
+echo "Running pre-commit guard..."
+python3 pre_commit_guard.py
+if [ $? -ne 0 ]; then
+    echo "[ERROR] Pre-commit guard failed. Aborting startup."
+    exit 1
+fi
+
+
 echo "正在局部安装 Node 依赖..."
 npm install zsxq-cli
 

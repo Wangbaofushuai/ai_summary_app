@@ -6,6 +6,14 @@ if not exist ".venv" (
 )
 call .venv\Scripts\activate.bat
 
+echo Running pre-commit guard...
+python pre_commit_guard.py
+if %errorlevel% neq 0 (
+    echo [ERROR] Pre-commit guard failed. Aborting startup.
+    exit /b %errorlevel%
+)
+
+
 echo Installing local Node dependencies...
 call npm install zsxq-cli
 

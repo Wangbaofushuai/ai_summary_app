@@ -21,9 +21,11 @@ NPX_CMD = "npx.cmd" if sys.platform == "win32" else "npx"
 # --- Config & Constants ---
 IMAGE_OUTPUT_DIR = os.path.join("outputs", "images")
 SCRIPT_OUTPUT_DIR = os.path.join("outputs", "scripts")
+INDICATOR_DOCS_DIR = os.path.join("outputs", "indicator_docs")
 CONFIG_FILE = "config.json"
 os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 os.makedirs(SCRIPT_OUTPUT_DIR, exist_ok=True)
+os.makedirs(INDICATOR_DOCS_DIR, exist_ok=True)
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -40,13 +42,283 @@ def save_config(data):
         json.dump(data, f, ensure_ascii=False, indent=4)
     os.replace(tmp_file, CONFIG_FILE)
 
+INDICATORS_FILE = "indicators.json"
+
+PROMPT_INDICATOR_STANDARD = """你是一个顶级金融技术分析专家，请根据提供的指标源码，严格按照以下结构输出技术观察文档：
+
+【绝对红线：禁止金融预测与违规交易指令】
+你的生成内容必须 100% 合规。严禁出现任何具有明确方向预测、交易暗示或主观情绪的词汇。
+1. **违禁词库（绝对不可使用）**：抄底、逃顶、建仓、满仓、空仓、加仓、减仓、买入、卖出、暴涨、暴跌、必涨、必跌、主力、庄家、洗盘、拉升、砸盘、黑马、牛股、底部确立。
+2. **强制替换规则**：
+   - 将所有带有方向色彩的词替换为中立词汇，例如："抄底" -> "低位关注" 或 "潜在企稳"；"逃顶" -> "高位风险"；"买入/卖出" -> "信号触发/条件满足"；"趋势线<11" 只能表述为 "进入低位观察区"。
+3. **安全缓冲用语**：所有描述必须加上“可能”、“潜在”、“或将”、“观察”等缓冲词，必须明确强调指标只是历史数据的概率统计，不构成对未来确定性的预测。
+
+【强制输出排版与色彩规范】
+1. 必须使用 Markdown 层级（## 二级标题、### 三级标题）。核心结论必须使用 `>` 引用块。
+2. 绝对禁止在全文中使用任何 Emoji 表情符号（坚决删除所有 Emoji）。
+3. **强制色彩标注（系统会做拦截处理，请严格按此格式写）**：
+   - 遇到【风险、顶部、空头、压力、预警、超买】等词汇，必须使用 `:green[词汇]` 或 `:orange[词汇]` 进行包裹。
+   - 遇到【底部、多头、支撑、低位、企稳、机会】等词汇，必须使用 `:red[词汇]` 进行包裹。
+   - 强调性的核心逻辑或公式、重要参数，请直接使用纯文字或 **加粗**。
+   - ⚠️ 警告：千万不要把色彩标签和加粗标签嵌套使用（绝不能写 `**:red[词汇]**` 或 `:red[**词汇**]`），色彩标签必须独立使用！且冒号必须是半角英文字符！
+4. **面向小白用户**：内容必须尽量通俗易懂，用大白话解释，**绝对不要在文档中贴出大段的原始代码**，只需要解释核心逻辑即可。
+
+【强制输出章节】
+## 一、指标定位
+## 二、核心逻辑与元素拆解
+## 三、合规化技术观察标签解读
+## 四、信号解析与实战观察流程
+## 五、特别教学与重要风险提示"""
+
+PROMPT_INDICATOR_COMMUNITY = """你现在是一位幽默、接地气且拥有多年实盘经验的资深交易技术讲师，主要面向社群用户互动。
+请根据以下标准技术文档，将其转化为高互动的社群语境教学文档：
+
+【绝对红线：禁止金融预测与违规交易指令】
+你的生成内容必须 100% 合规。严禁出现任何具有明确方向预测、交易暗示或主观情绪的词汇。
+1. **违禁词库（绝对不可使用）**：抄底、逃顶、建仓、满仓、空仓、加仓、减仓、买入、卖出、暴涨、暴跌、必涨、必跌、主力、庄家、洗盘、拉升、砸盘、黑马、牛股、底部确立。
+2. **强制替换规则**：
+   - 将所有带有方向色彩的词替换为中立词汇，例如："抄底" -> "低位关注" 或 "潜在企稳"；"逃顶" -> "高位风险"；"买入/卖出" -> "信号触发/条件满足"。
+3. **安全缓冲用语**：所有描述必须加上“可能”、“潜在”、“或将”、“观察”等缓冲词，必须明确强调指标只是历史数据的概率统计，不构成对未来确定性的预测。
+
+【强制输出排版与色彩规范】
+1. 必须保留 Markdown 层级标题。核心心法必须使用 `>` 引用块。
+2. 绝对禁止在全文中使用任何 Emoji 表情符号（坚决删除所有 Emoji）。
+3. **强制色彩标注（系统会做拦截处理，请严格按此格式写）**：
+   - 负面/预警类（顶部/空头/压力）：必须使用 `:green[词汇]` 或 `:orange[词汇]`。
+   - 正面/机会类（底部/多头/支撑）：必须使用 `:red[词汇]`。
+   - 强调核心逻辑、公式使用纯文字或 **加粗**。
+   - ⚠️ 警告：千万不要把色彩标签和加粗标签嵌套使用！且冒号必须是半角英文字符！
+4. **面向小白用户**：通俗易懂，绝对不要贴出大段代码。
+
+【内容结构指令】
+1. 引导语：以散户常见的技术观察盲区产生共鸣作为开头。
+2. 话题互动：设置一个轻互动话题，引导客观复盘。
+3. 知识讲解：采用《指标小课堂》系列形式（如标明：第1期），深入浅出讲解。
+4. **必须生成表格**：生成一个名为“进阶形态与风控应对预案”的 Markdown 表格，严格包含三列：`| 形态模式 | 盘面技术特征 | 合规化应对策略建议 |`。
+5. 结尾：发起学习打卡或客观技术小结任务，鼓励大家留言互动。"""
+
+def load_indicators():
+    if os.path.exists(INDICATORS_FILE):
+        try:
+            with open(INDICATORS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_indicator(name, code):
+    data = load_indicators()
+    data[name] = {
+        "code": code,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    tmp_file = INDICATORS_FILE + ".tmp"
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+    os.replace(tmp_file, INDICATORS_FILE)
+
+def delete_indicator(name):
+    data = load_indicators()
+    if name in data:
+        del data[name]
+        tmp_file = INDICATORS_FILE + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        os.replace(tmp_file, INDICATORS_FILE)
+
 if "config" not in st.session_state:
     st.session_state.config = load_config()
 
 config = st.session_state.config
 
+def markdown_to_docx_file(md_text, filepath, indicator_name="本指标"):
+    from docx import Document
+    from docx.shared import RGBColor, Pt
+    from docx.oxml.shared import OxmlElement
+    from docx.oxml.ns import qn
+    import re
+    
+    # 标题颜色分级体系
+    HEADING_COLORS = {
+        1: RGBColor(0, 63, 114),    # 深靛蓝 — 一级标题
+        2: RGBColor(0, 82, 148),    # 靛蓝 — 二级标题
+        3: RGBColor(34, 107, 156),  # 钢蓝 — 三级标题
+    }
+    
+    doc = Document()
+    lines = md_text.split('\n')
+    
+    in_table = False
+    table = None
+    in_code_block = False
+    prev_was_blank = False
+    
+    def _render_inline(p, text, is_quote=False, is_th=False):
+        # 清洗可能存在的全角冒号及嵌套加粗
+        text = text.replace("：green[", ":green[").replace("：red[", ":red[").replace("：orange[", ":orange[")
+        # 脱掉颜色标签外层的加粗标记 (例如 **:red[升]** -> :red[升])
+        text = re.sub(r'\*\*\s*(:(?:green|red|orange)\[.*?\])\s*\*\*', r'\1', text)
+        
+        pattern = r'(:(?:green|red|orange)\[.*?\]|\*\*.*?\*\*)'
+        parts = re.split(pattern, text)
+        for part in parts:
+            if not part: continue
+            run = p.add_run()
+            if is_quote:
+                run.italic = True
+                run.font.color.rgb = RGBColor(128, 128, 128)
+            
+            if is_th: run.bold = True
+                
+            if part.startswith(':green[') and part.endswith(']'):
+                run.text = part[7:-1]
+                run.font.color.rgb = RGBColor(0, 128, 0)
+                run.bold = True
+            elif part.startswith(':red[') and part.endswith(']'):
+                run.text = part[5:-1]
+                run.font.color.rgb = RGBColor(255, 0, 0)
+                run.bold = True
+            elif part.startswith(':orange[') and part.endswith(']'):
+                run.text = part[8:-1]
+                run.font.color.rgb = RGBColor(255, 165, 0)
+                run.bold = True
+            elif part.startswith('**') and part.endswith('**'):
+                run.text = part[2:-2]
+                run.bold = True
+            else:
+                run.text = part
+                
+    def _set_heading_color(h, level):
+        color = HEADING_COLORS.get(level, RGBColor(0, 82, 148))
+        for run in h.runs:
+            run.font.color.rgb = color
+            run.bold = True
+                
+    for line in lines:
+        stripped = line.strip()
+        
+        # 处理代码块标记
+        if stripped.startswith('```'):
+            in_code_block = not in_code_block
+            prev_was_blank = False
+            continue
+        
+        # 代码块内容：等宽缩进段落
+        if in_code_block:
+            p = doc.add_paragraph()
+            run = p.add_run(line.rstrip())
+            run.font.name = 'Consolas'
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(80, 80, 80)
+            pf = p.paragraph_format
+            pf.left_indent = Pt(24)
+            pf.space_before = Pt(0)
+            pf.space_after = Pt(0)
+            prev_was_blank = False
+            continue
+        
+        # 过滤水平分隔线 --- / *** / ___
+        if re.match(r'^[-*_]{3,}$', stripped):
+            prev_was_blank = False
+            continue
+        
+        # 空行处理：直接跳过，避免生成无意义的大缝隙空行
+        if not stripped:
+            if in_table:
+                in_table = False
+            continue
+        
+        if stripped.startswith('|') and stripped.endswith('|'):
+            cells = [c.strip() for c in stripped.split('|')[1:-1]]
+            if not in_table:
+                in_table = True
+                table = doc.add_table(rows=1, cols=len(cells))
+                table.style = 'Table Grid'
+                row_cells = table.rows[0].cells
+                for i, cell_text in enumerate(cells):
+                    if i < len(row_cells): _render_inline(row_cells[i].paragraphs[0], cell_text, is_th=True)
+            else:
+                if all(re.match(r'^[-:\s]+$', c) for c in cells): continue 
+                row_cells = table.add_row().cells
+                for i, cell_text in enumerate(cells):
+                    if i < len(row_cells): _render_inline(row_cells[i].paragraphs[0], cell_text)
+            continue
+        else:
+            if in_table: in_table = False
+        
+        if stripped.startswith('#### '):
+            h = doc.add_heading(level=4)
+            _render_inline(h, stripped[5:])
+            _set_heading_color(h, 3)
+        elif stripped.startswith('### '): 
+            h = doc.add_heading(level=3)
+            _render_inline(h, stripped[4:])
+            _set_heading_color(h, 3)
+        elif stripped.startswith('## '): 
+            h = doc.add_heading(level=2)
+            _render_inline(h, stripped[3:])
+            _set_heading_color(h, 2)
+        elif stripped.startswith('# '): 
+            h = doc.add_heading(level=1)
+            _render_inline(h, stripped[2:])
+            _set_heading_color(h, 1)
+        else:
+            is_quote = stripped.startswith('>')
+            is_bullet = stripped.startswith('- ') or stripped.startswith('* ')
+            if is_bullet:
+                p = doc.add_paragraph(style='List Bullet')
+                text = stripped[2:]
+            else:
+                p = doc.add_paragraph()
+                if is_quote:
+                    text = stripped[1:].strip()
+                else:
+                    text = stripped
+            if text:
+                _render_inline(p, text, is_quote)
+
+    # 动态追加美化版的合规免责声明（与指标名称绑定）
+    doc.add_paragraph()
+    dtbl = doc.add_table(rows=1, cols=1)
+    dcell = dtbl.cell(0, 0)
+    
+    tcPr = dcell._tc.get_or_add_tcPr()
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), 'FFF0F0')
+    tcPr.append(shd)
+    
+    tcBorders = OxmlElement('w:tcBorders')
+    left = OxmlElement('w:left')
+    left.set(qn('w:val'), 'single')
+    left.set(qn('w:sz'), '24')
+    left.set(qn('w:space'), '0')
+    left.set(qn('w:color'), 'C00000')
+    tcBorders.append(left)
+    for border_name in ['top', 'right', 'bottom']:
+        b = OxmlElement(f'w:{border_name}')
+        b.set(qn('w:val'), 'nil')
+        tcBorders.append(b)
+    tcPr.append(tcBorders)
+
+    dp1 = dcell.paragraphs[0]
+    r1 = dp1.add_run("重要合规化声明：\n")
+    r1.bold = True
+    r1.font.color.rgb = RGBColor(192, 0, 0)
+    
+    dp2 = dcell.add_paragraph()
+    r2 = dp2.add_run(f"以上关于《{indicator_name}》的所有信号提示和区间标注，均是基于历史收盘价等统计数据的技术测算展示，不保证任何未来走势预测的准确性。\n\n")
+    r2.font.color.rgb = RGBColor(192, 0, 0)
+    
+    r3 = dp2.add_run(f"本手册中涉及的所有技术观察标签和计算逻辑仅供技术分析学习与参考，不构成任何形式的投资建议或操作指令。投资者据此操作风险自担，市场有风险，投资需谨慎。请务必结合自身风险承受能力，严格执行止盈止损纪律，独立做出判断。")
+    r3.font.color.rgb = RGBColor(192, 0, 0)
+
+    doc.save(filepath)
+
 # Default Config Setup
 defaults = {
+    "user_groups": {},
     "groups": {"默认群组": ""},
     "platform": "自定义/OpenAI",
     "mode": "常规总结",
@@ -94,7 +366,17 @@ def auto_run_job():
     cfg = load_config()
     if not cfg.get("auto_run", False): return
     try:
-        group_id = cfg.get("groups", {}).get(cfg.get("selected_group"))
+        # Resolve group_id based on current CLI login
+        status_res = subprocess.run([NPX_CMD, "zsxq-cli", "auth", "status", "--json"], capture_output=True, text=True, encoding='utf-8')
+        user_id = ""
+        m = re.search(r'\{.*\}', status_res.stdout, re.DOTALL)
+        if m:
+            auth_data = json.loads(m.group(0))
+            if auth_data.get("ok") and auth_data.get("data", {}).get("loggedIn"):
+                user_id = auth_data["data"].get("userId", "")
+        
+        if not user_id: return
+        group_id = cfg.get("user_groups", {}).get(user_id, {}).get(cfg.get("selected_group"))
         if not group_id: return
         raw, _, _ = fetch_zsxq(group_id, limit=3, scope="all")
         if "失败" in raw or "异常" in raw: return
@@ -179,7 +461,10 @@ def fetch_zsxq(group_id, limit=3, scope="all", progress_callback=None):
     ], capture_output=True, text=True, encoding='utf-8', timeout=30)
     
     if result.returncode != 0:
-        return "获取失败: CLI 内部错误", [], []
+        err_msg = result.stderr.strip() if result.stderr else (result.stdout.strip() if result.stdout else "CLI 内部错误")
+        m_err = re.search(r'(error:.*?)(?:\r|\n|$)', err_msg)
+        if m_err: err_msg = m_err.group(1)
+        return f"获取失败: {err_msg}", [], []
 
     try:
         m = re.search(r'\{.*\}', result.stdout, re.DOTALL)
@@ -418,20 +703,27 @@ st.set_page_config(page_title="AI 多功能控制台", layout="wide")
 
 with st.sidebar:
     st.header("🧭 导航")
-    page_selection = st.radio("选择功能模块", ["AI 深度分析", "视频脚本制作器"], label_visibility="collapsed")
+    page_selection = st.radio("选择功能模块", ["AI 深度分析", "视频脚本制作器", "指标文档制作"], label_visibility="collapsed")
     st.markdown("---")
     
     st.header("⚙️ 全局配置")
     st.subheader("知识星球授权")
     auth_check = subprocess.run([NPX_CMD, "zsxq-cli", "auth", "status", "--json"], capture_output=True, text=True, encoding='utf-8')
     logged_in = False
+    user_id = ""
+    user_name = ""
     try:
         m_auth = re.search(r'\{.*\}', auth_check.stdout, re.DOTALL)
-        if m_auth and json.loads(m_auth.group(0)).get("ok") and json.loads(m_auth.group(0)).get("data", {}).get("loggedIn"): logged_in = True
+        if m_auth:
+            auth_data = json.loads(m_auth.group(0))
+            if auth_data.get("ok") and auth_data.get("data", {}).get("loggedIn"):
+                logged_in = True
+                user_id = auth_data["data"].get("userId", "")
+                user_name = auth_data["data"].get("userName", "")
     except: pass
     
     if logged_in:
-        st.success("✅ 已授权登录")
+        st.success(f"✅ {user_name} (已授权)")
         if st.button("退出登录"): subprocess.run([NPX_CMD, "zsxq-cli", "auth", "logout"]); st.rerun()
     else:
         st.warning("⚠️ 未授权")
@@ -459,14 +751,61 @@ with st.sidebar:
                 except Exception:
                     st.error("验证失败：无法解析登录状态。")
 
-    groups_dict = config["groups"]
-    sel_g_name = st.selectbox("选择星球/群组", list(groups_dict.keys()), index=0 if config["selected_group"] not in groups_dict else list(groups_dict.keys()).index(config["selected_group"]))
-    config["selected_group"] = sel_g_name
+    # Dynamic groups based on userId
+    if logged_in and user_id:
+        if "user_groups" not in config: config["user_groups"] = {}
+        if user_id not in config["user_groups"]:
+            # Initialize with old groups if present, otherwise default
+            config["user_groups"][user_id] = config.get("groups", {"默认群组": ""})
+            save_config(config)
+        groups_dict = config["user_groups"][user_id]
+    else:
+        groups_dict = {"默认群组": ""}
+        
+    group_keys = list(groups_dict.keys())
+    if not group_keys:
+        groups_dict = {"默认群组": ""}
+        group_keys = ["默认群组"]
+        
+    # Maintain selected_group consistency
+    if config.get("selected_group") not in group_keys:
+        config["selected_group"] = group_keys[0]
+
+    sel_g_name = st.selectbox("选择星球/群组", group_keys, index=group_keys.index(config["selected_group"]))
+    if sel_g_name != config["selected_group"]:
+        config["selected_group"] = sel_g_name
+        save_config(config)
+        
     curr_group_id = groups_dict[sel_g_name]
     
-    with st.expander("➕ 星球管理"):
-        ng_name = st.text_input("名称"); ng_id = st.text_input("Group ID")
-        if st.button("保存群组") and ng_name and ng_id: config["groups"][ng_name] = ng_id; save_config(config); st.rerun()
+    if logged_in and user_id:
+        with st.expander("➕ 星球管理"):
+            st.markdown("**新增或修改群组**")
+            ng_name = st.text_input("星球名称", placeholder="例如：阿铭linux")
+            ng_id = st.text_input("Group ID", placeholder="星球数字ID")
+            if st.button("💾 保存/更新群组"):
+                if ng_name and ng_id:
+                    config["user_groups"][user_id][ng_name] = ng_id
+                    config["selected_group"] = ng_name
+                    save_config(config)
+                    st.success("更新成功！")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("名称和ID不能为空！")
+                    
+            st.markdown("---")
+            st.markdown("**删除群组**")
+            del_g_name = st.selectbox("选择要删除的群组", group_keys)
+            if st.button("🗑️ 删除选中群组"):
+                if del_g_name in config["user_groups"][user_id]:
+                    del config["user_groups"][user_id][del_g_name]
+                    if config["selected_group"] == del_g_name:
+                        config["selected_group"] = list(config["user_groups"][user_id].keys())[0] if config["user_groups"][user_id] else ""
+                    save_config(config)
+                    st.success("删除成功！")
+                    time.sleep(0.5)
+                    st.rerun()
 
     st.subheader("AI 配置")
     plat_ops = ["自定义/OpenAI", "火山方舟 (Volcengine)", "魔塔 (ModelScope)"]
@@ -921,3 +1260,212 @@ elif page_selection == "视频脚本制作器":
                                 st.session_state['generated_script_preview'] = f.read()
                             st.session_state['export_format_choice'] = '.md'
                             st.rerun()
+
+elif page_selection == "指标文档制作":
+    st.title("📈 指标文档制作")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("⚙️ 1. 指标库管理")
+        indicators = load_indicators()
+        ind_options = ["✨ [新建空白指标]"] + list(indicators.keys())
+        
+        # Maintain selection state
+        if "ind_selected" not in st.session_state: st.session_state["ind_selected"] = ind_options[0]
+        sel_ind = st.selectbox("选择或新建指标", ind_options, index=ind_options.index(st.session_state["ind_selected"]) if st.session_state["ind_selected"] in ind_options else 0)
+        
+        if sel_ind != st.session_state["ind_selected"]:
+            st.session_state["ind_selected"] = sel_ind
+            st.rerun()
+        
+        if sel_ind == "✨ [新建空白指标]":
+            def_name = ""
+            def_code = ""
+        else:
+            def_name = sel_ind
+            def_code = indicators[sel_ind]["code"]
+            
+        new_ind_name = st.text_input("指标名称", value=def_name, placeholder="例如：震荡顶底模型")
+        new_ind_code = st.text_area("指标源码", value=def_code, height=200, placeholder="在此粘贴 Pine Script 或 Python 源码...")
+        
+        c_btn1, c_btn2 = st.columns(2)
+        with c_btn1:
+            if st.button("💾 保存/更新", use_container_width=True):
+                if new_ind_name.strip() and new_ind_code.strip():
+                    save_indicator(new_ind_name.strip(), new_ind_code.strip())
+                    st.session_state["ind_selected"] = new_ind_name.strip()
+                    st.success(f"指标 '{new_ind_name}' 已保存！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("名称和源码不能为空！")
+        with c_btn2:
+            if st.button("🗑️ 删除", use_container_width=True):
+                if sel_ind != "✨ [新建空白指标]":
+                    delete_indicator(sel_ind)
+                    st.session_state["ind_selected"] = "✨ [新建空白指标]"
+                    st.success(f"指标 '{sel_ind}' 已删除！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("新建状态不可删除")
+                    
+        st.markdown("---")
+        st.subheader("⚡ 2. 生成分析文档")
+        
+        if not indicators:
+            st.info("暂无已保存的指标，请先保存指标后再生成。")
+        else:
+            gen_ind = st.selectbox("选择目标指标", list(indicators.keys()), index=list(indicators.keys()).index(st.session_state["ind_selected"]) if st.session_state["ind_selected"] in indicators else 0)
+            
+            if st.button("🚀 生成标准合规版", type="primary", use_container_width=True):
+                if not current_chan_config.get("api_key"): st.error("请先在左侧全局配置中填写 API Key！")
+                else:
+                    with st.status("正在生成标准合规分析文档...", expanded=True) as status:
+                        st.write(f"🧠 AI 正在分析 {gen_ind} 的源码...")
+                        user_content = f"【指标名称】：{gen_ind}\n【指标源码】：\n{indicators[gen_ind]['code']}"
+                        try:
+                            client = OpenAI(api_key=current_chan_config.get("api_key"), base_url=current_chan_config.get("base_url") if current_chan_config.get("base_url") else None)
+                            response = client.chat.completions.create(
+                                model=current_chan_config.get("selected_model"),
+                                messages=[
+                                    {"role": "system", "content": PROMPT_INDICATOR_STANDARD},
+                                    {"role": "user", "content": user_content}
+                                ]
+                            )
+                            if not response.choices: raise Exception("接口返回空数据")
+                            doc_content = response.choices[0].message.content
+                            
+                            ts = datetime.now().strftime("%Y%m%d%H%M%S")
+                            md_filename = f"《{gen_ind}》---合规化_{ts}.md"
+                            docx_filename = f"《{gen_ind}》---合规化_{ts}.docx"
+                            md_path = os.path.join(INDICATOR_DOCS_DIR, md_filename)
+                            docx_path = os.path.join(INDICATOR_DOCS_DIR, docx_filename)
+                            
+                            with open(md_path, "w", encoding="utf-8") as f: f.write(doc_content)
+                            markdown_to_docx_file(doc_content, docx_path, indicator_name=gen_ind)
+                            
+                            st.session_state["ind_preview_title"] = f"{gen_ind} (标准合规版)"
+                            st.session_state["ind_preview_content"] = doc_content
+                            st.session_state["ind_preview_docx"] = docx_path
+                            
+                            status.update(label="标准文档生成完成！", state="complete", expanded=False)
+                            st.rerun()
+                        except Exception as e:
+                            status.update(label="生成失败", state="error")
+                            st.error(f"报错信息: {str(e)}")
+                            
+            if st.button("✨ 基于标准版一键转化【社群互动教学】版", use_container_width=True):
+                if not current_chan_config.get("api_key"): st.error("请先填写 API Key！")
+                elif "ind_preview_content" not in st.session_state or "合规化" not in st.session_state.get("ind_preview_title", ""):
+                    st.warning("请先生成或从右侧历史预览一份【标准合规版】文档，再进行转化！")
+                else:
+                    with st.status("正在进行社群风格转换...", expanded=True) as status2:
+                        try:
+                            client = OpenAI(api_key=current_chan_config.get("api_key"), base_url=current_chan_config.get("base_url") if current_chan_config.get("base_url") else None)
+                            response2 = client.chat.completions.create(
+                                model=current_chan_config.get("selected_model"),
+                                messages=[
+                                    {"role": "system", "content": PROMPT_INDICATOR_COMMUNITY},
+                                    {"role": "user", "content": f"请将以下标准技术文档转化为社群教学版本：\n\n{st.session_state['ind_preview_content']}"}
+                                ]
+                            )
+                            if not response2.choices: raise Exception("接口返回空数据")
+                            comm_doc = response2.choices[0].message.content
+                            
+                            ts = datetime.now().strftime("%Y%m%d%H%M%S")
+                            md_filename = f"《{gen_ind}》--社群指标互动手册_{ts}.md"
+                            docx_filename = f"《{gen_ind}》--社群指标互动手册_{ts}.docx"
+                            md_path = os.path.join(INDICATOR_DOCS_DIR, md_filename)
+                            docx_path = os.path.join(INDICATOR_DOCS_DIR, docx_filename)
+                            
+                            with open(md_path, "w", encoding="utf-8") as f: f.write(comm_doc)
+                            markdown_to_docx_file(comm_doc, docx_path, indicator_name=gen_ind)
+                            
+                            st.session_state["ind_preview_title"] = f"{gen_ind} (社群互动教学版)"
+                            st.session_state["ind_preview_content"] = comm_doc
+                            st.session_state["ind_preview_docx"] = docx_path
+                            
+                            status2.update(label="社群文档转换完成！", state="complete", expanded=False)
+                            st.rerun()
+                        except Exception as e:
+                            status2.update(label="转换失败", state="error")
+                            st.error(f"报错信息: {str(e)}")
+
+    with col2:
+        st.subheader("👁️ 3. 预览与归档")
+        
+        preview_title = st.session_state.get("ind_preview_title", "预览区")
+        preview_content = st.session_state.get("ind_preview_content", "")
+        
+        with st.container(border=True):
+            st.markdown(f"#### {preview_title}")
+            if preview_content:
+                st.markdown(preview_content)
+                docx_path = st.session_state.get("ind_preview_docx")
+                if docx_path and os.path.exists(docx_path):
+                    with open(docx_path, "rb") as f: docx_data = f.read()
+                    st.download_button(
+                        label="⬇️ 下载该 Docx 文档",
+                        data=docx_data,
+                        file_name=os.path.basename(docx_path),
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                        type="primary"
+                    )
+            else:
+                st.info("右侧暂无预览，请在左侧操作生成或从历史归档中选择。")
+                
+        st.markdown("---")
+        st.write("### 📅 历史报告归档")
+        hist_docs = sorted(glob.glob(os.path.join(INDICATOR_DOCS_DIR, "*.md")), reverse=True)
+        if not hist_docs:
+            st.info("暂无生成的文档归档。")
+        else:
+            # 按日期分组
+            grouped_files = {}
+            for h_md in hist_docs:
+                basename = os.path.basename(h_md)
+                match = re.search(r'_(\d{8})\d{6}\.md$', basename)
+                if match:
+                    date_str = datetime.strptime(match.group(1), "%Y%m%d").strftime("%Y-%m-%d")
+                else:
+                    mtime = os.path.getmtime(h_md)
+                    date_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d')
+                
+                if date_str not in grouped_files:
+                    grouped_files[date_str] = []
+                grouped_files[date_str].append(h_md)
+            
+            # 日期下拉菜单
+            date_list = sorted(grouped_files.keys(), reverse=True)
+            selected_date = st.selectbox("选择日期", date_list, index=0, key="hist_date_select")
+            
+            # 仅展示所选日期的文件
+            if selected_date in grouped_files:
+                for h_md in grouped_files[selected_date]:
+                    basename = os.path.basename(h_md)
+                    with st.expander(f"📄 {basename}"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if st.button("👁️ 在上方预览", key=f"prev_{h_md}", use_container_width=True):
+                                with open(h_md, "r", encoding="utf-8") as f: content = f.read()
+                                docx_p = h_md.replace(".md", ".docx")
+                                st.session_state["ind_preview_title"] = basename.replace(".md", "")
+                                st.session_state["ind_preview_content"] = content
+                                st.session_state["ind_preview_docx"] = docx_p if os.path.exists(docx_p) else ""
+                                st.rerun()
+                        with c2:
+                            docx_p = h_md.replace(".md", ".docx")
+                            if os.path.exists(docx_p):
+                                with open(docx_p, "rb") as f: db = f.read()
+                                st.download_button(
+                                    label="⬇️ 下载 Docx",
+                                    data=db,
+                                    file_name=os.path.basename(docx_p),
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=f"dl_{docx_p}",
+                                    use_container_width=True
+                                )
+

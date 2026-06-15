@@ -13,6 +13,11 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
+echo Installing Dreamina CLI...
+if not exist "dreamina.exe" (
+    curl.exe -fLo dreamina.exe https://lf3-static.bytednsdoc.com/obj/eden-cn/psj_hupthlyk/ljhwZthlaukjlkulzlp/dreamina_cli_beta/dreamina_cli_windows_amd64.exe
+)
+
 
 echo Installing local Node dependencies...
 call npm install zsxq-cli

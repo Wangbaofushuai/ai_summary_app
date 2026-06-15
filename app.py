@@ -17,15 +17,20 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import sys
 
 NPX_CMD = "npx.cmd" if sys.platform == "win32" else "npx"
+DREAMINA_CMD = "dreamina.exe" if sys.platform == "win32" else "./dreamina"
 
 # --- Config & Constants ---
 IMAGE_OUTPUT_DIR = os.path.join("outputs", "images")
 SCRIPT_OUTPUT_DIR = os.path.join("outputs", "scripts")
 INDICATOR_DOCS_DIR = os.path.join("outputs", "indicator_docs")
+WECHAT_OUTPUT_DIR = os.path.join("outputs", "wechat")
+WECHAT_IMAGES_DIR = os.path.join("outputs", "wechat", "images")
 CONFIG_FILE = "config.json"
 os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 os.makedirs(SCRIPT_OUTPUT_DIR, exist_ok=True)
 os.makedirs(INDICATOR_DOCS_DIR, exist_ok=True)
+os.makedirs(WECHAT_OUTPUT_DIR, exist_ok=True)
+os.makedirs(WECHAT_IMAGES_DIR, exist_ok=True)
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -330,21 +335,112 @@ def markdown_to_docx_file(md_text, filepath, indicator_name="本指标"):
 
     doc.save(filepath)
 
-def get_bing_image(keyword):
-    import httpx
+def generate_jimeng_image(prompt_text, retries=1):
     import re
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-    }
-    url = f"https://cn.bing.com/images/search?q={keyword}&first=1"
-    try:
-        resp = httpx.get(url, headers=headers, timeout=10)
-        matches = re.findall(r'murl&quot;:&quot;(http[^&]+)&quot;', resp.text)
-        if matches:
-            return matches[0]
-    except Exception:
-        pass
-    return f"https://picsum.photos/seed/{keyword}/800/400"
+    import time
+    for attempt in range(retries + 1):
+        try:
+            # Call Dreamina CLI to generate image. --poll=120 will wait up to 120 seconds.
+            # Ensure we output JSON or parse text carefully.
+            res = subprocess.run([DREAMINA_CMD, "text2image", f"--prompt={prompt_text}", "--poll=120"], capture_output=True, text=True, encoding='utf-8')
+            # Expecting output containing URL or similar, since dreamina text2image might output a result message
+            # We look for https://... link to the generated image
+            # Let's extract URLs from the output
+            urls = re.findall(r'https?://[^\s\"\'\)]+', res.stdout)
+            img_url = None
+            for u in urls:
+                if "tos-" in u or "image" in u or ".png" in u or ".jpg" in u or ".jpeg" in u or ".webp" in u:
+                    img_url = u
+                    break
+            if not img_url and urls:
+                img_url = urls[-1] # fallback to the last URL found
+                
+            if img_url:
+                # Download the image
+                import httpx
+                import uuid
+                img_resp = httpx.get(img_url, timeout=30)
+                if img_resp.status_code == 200:
+                    filename = f"jimeng_{uuid.uuid4().hex[:8]}.jpg"
+                    filepath = os.path.join(WECHAT_IMAGES_DIR, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(img_resp.content)
+                    return filepath
+        except Exception:
+            pass
+        if attempt < retries:
+            time.sleep(2)
+    return None
+
+def generate_gemini_image(prompt_text, api_key, model_name="imagen-4.0-generate-001", aspect_ratio="1:1", retries=1):
+    import base64
+    import time
+    import httpx
+    import uuid
+    
+    if not api_key:
+        return None
+        
+    for attempt in range(retries + 1):
+        try:
+            if "gemini" in model_name:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                headers = {"Content-Type": "application/json"}
+                payload = {
+                    "contents": [{"parts": [{"text": prompt_text}]}],
+                    "generationConfig": {
+                        "responseModalities": ["IMAGE"]
+                    }
+                }
+                resp = httpx.post(url, headers=headers, json=payload, timeout=60)
+                if resp.status_code == 200:
+                    resp_json = resp.json()
+                    parts = resp_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    img_data = None
+                    for p in parts:
+                        if "inlineData" in p:
+                            b64 = p["inlineData"]["data"]
+                            img_data = base64.b64decode(b64)
+                            break
+                    if img_data:
+                        filename = f"gemini_{uuid.uuid4().hex[:8]}.jpg"
+                        filepath = os.path.join(WECHAT_IMAGES_DIR, filename)
+                        with open(filepath, "wb") as f:
+                            f.write(img_data)
+                        return filepath
+                else:
+                    print(f"Gemini Image Gen failed, status code: {resp.status_code}, response: {resp.text}")
+            else:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:predict?key={api_key}"
+                headers = {"Content-Type": "application/json"}
+                payload = {
+                    "instances": [{"prompt": prompt_text}],
+                    "parameters": {
+                        "sampleCount": 1,
+                        "aspectRatio": aspect_ratio
+                    }
+                }
+                resp = httpx.post(url, headers=headers, json=payload, timeout=60)
+                if resp.status_code == 200:
+                    resp_json = resp.json()
+                    predictions = resp_json.get("predictions", [])
+                    if predictions:
+                        img_b64 = predictions[0].get("bytesBase64Encoded")
+                        if img_b64:
+                            img_data = base64.b64decode(img_b64)
+                            filename = f"gemini_{uuid.uuid4().hex[:8]}.jpg"
+                            filepath = os.path.join(WECHAT_IMAGES_DIR, filename)
+                            with open(filepath, "wb") as f:
+                                f.write(img_data)
+                            return filepath
+                else:
+                    print(f"Gemini Image Gen failed, status code: {resp.status_code}, response: {resp.text}")
+        except Exception as e:
+            print(f"Gemini Image Gen error: {str(e)}")
+            
+        if attempt < retries:
+            time.sleep(2)
+    return None
 
 def markdown_to_wechat_docx_bytes(md_text):
     from docx import Document
@@ -361,13 +457,17 @@ def markdown_to_wechat_docx_bytes(md_text):
         if not stripped: continue
         
         # 匹配图片 ![alt](url)
-        img_match = re.search(r'!\[.*?\]\((https?://.*?)\)', stripped)
+        img_match = re.search(r'!\[.*?\]\((.*?)\)', stripped)
         if img_match:
-            img_url = img_match.group(1)
+            img_path = img_match.group(1)
             try:
-                resp = httpx.get(img_url, timeout=15)
-                if resp.status_code == 200:
-                    doc.add_picture(BytesIO(resp.content), width=Inches(6.0))
+                if img_path.startswith("http"):
+                    resp = httpx.get(img_path, timeout=15)
+                    if resp.status_code == 200:
+                        doc.add_picture(BytesIO(resp.content), width=Inches(6.0))
+                else:
+                    if os.path.exists(img_path):
+                        doc.add_picture(img_path, width=Inches(6.0))
             except Exception:
                 pass
             continue
@@ -392,9 +492,31 @@ def markdown_to_wechat_docx_bytes(md_text):
                 else:
                     p.add_run(part)
 
-    out = BytesIO()
-    doc.save(out)
-    return out.getvalue()
+    for p in doc.paragraphs:
+        p.paragraph_format.space_after = Pt(12)
+        
+    f = BytesIO()
+    doc.save(f)
+    return f.getvalue()
+
+def render_wechat_preview(md_text):
+    import re
+    # split text by markdown images
+    parts = re.split(r'(!\[.*?\]\(.*?\))', md_text)
+    for part in parts:
+        if part.startswith("!["):
+            m = re.match(r'!\[(.*?)\]\((.*?)\)', part)
+            if m:
+                img_path = m.group(2)
+                if img_path.startswith("http"):
+                    st.image(img_path)
+                elif os.path.exists(img_path):
+                    st.image(img_path)
+                else:
+                    st.markdown(part)
+        else:
+            if part.strip():
+                st.markdown(part, unsafe_allow_html=True)
 
 # Default Config Setup
 defaults = {
@@ -794,13 +916,32 @@ with st.sidebar:
     st.markdown("---")
     
     st.header("⚙️ 全局配置")
+    
+    @st.cache_data(ttl=300, show_spinner=False)
+    def get_zsxq_auth_status():
+        res = subprocess.run([NPX_CMD, "zsxq-cli", "auth", "status", "--json"], capture_output=True, text=True, encoding='utf-8')
+        return res.stdout
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def get_dreamina_credit_status():
+        res = subprocess.run([DREAMINA_CMD, "user_credit"], capture_output=True, text=True, encoding='utf-8')
+        return res.returncode, res.stdout
+        
+    def clear_auth_cache():
+        get_zsxq_auth_status.clear()
+        get_dreamina_credit_status.clear()
+        
+    if st.button("🔄 刷新授权状态", use_container_width=True):
+        clear_auth_cache()
+        st.rerun()
+        
     st.subheader("知识星球授权")
-    auth_check = subprocess.run([NPX_CMD, "zsxq-cli", "auth", "status", "--json"], capture_output=True, text=True, encoding='utf-8')
+    zsxq_stdout = get_zsxq_auth_status()
     logged_in = False
     user_id = ""
     user_name = ""
     try:
-        m_auth = re.search(r'\{.*\}', auth_check.stdout, re.DOTALL)
+        m_auth = re.search(r'\{.*\}', zsxq_stdout, re.DOTALL)
         if m_auth:
             auth_data = json.loads(m_auth.group(0))
             if auth_data.get("ok") and auth_data.get("data", {}).get("loggedIn"):
@@ -811,7 +952,10 @@ with st.sidebar:
     
     if logged_in:
         st.success(f"✅ {user_name} (已授权)")
-        if st.button("退出登录"): subprocess.run([NPX_CMD, "zsxq-cli", "auth", "logout"]); st.rerun()
+        if st.button("退出登录"): 
+            subprocess.run([NPX_CMD, "zsxq-cli", "auth", "logout"])
+            clear_auth_cache()
+            st.rerun()
     else:
         st.warning("⚠️ 未授权")
         if st.button("🔗 获取授权链接"):
@@ -832,11 +976,92 @@ with st.sidebar:
                     if m_verify and json.loads(m_verify.group(0)).get("ok"):
                         st.success("授权成功！")
                         del st.session_state.zsxq_device_code
+                        clear_auth_cache()
                         st.rerun()
                     else:
                         st.error("未检测到成功授权，请确认您已在手机端扫码并输入了确认码！")
                 except Exception:
                     st.error("验证失败：无法解析登录状态。")
+
+    st.markdown("---")
+    st.subheader("图片生成配置")
+    
+    img_gen_ops = ["即梦 (Dreamina)", "Google Gemini (Imagen 3)"]
+    prev_img_gen = config.get("image_generator", "即梦 (Dreamina)")
+    selected_img_gen = st.selectbox("图片生成引擎", img_gen_ops, index=img_gen_ops.index(prev_img_gen) if prev_img_gen in img_gen_ops else 0)
+    
+    if selected_img_gen != prev_img_gen:
+        config["image_generator"] = selected_img_gen
+        save_config(config)
+        st.rerun()
+
+    if selected_img_gen == "Google Gemini (Imagen 3)":
+        google_api_key_val = config.get("google_api_key", "")
+        new_google_key = st.text_input("Google API Key", value=google_api_key_val, type="password")
+        
+        model_ops = ["imagen-4.0-generate-001", "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001", "gemini-3.1-flash-image"]
+        prev_model = config.get("gemini_image_model", "imagen-4.0-generate-001")
+        selected_model = st.selectbox("Gemini 绘图模型", model_ops, index=model_ops.index(prev_model) if prev_model in model_ops else 0)
+        
+        aspect_ratio_ops = ["1:1", "4:3", "16:9", "3:4", "9:16"]
+        prev_aspect_ratio = config.get("image_aspect_ratio", "1:1")
+        selected_ratio = st.selectbox("图片比例", aspect_ratio_ops, index=aspect_ratio_ops.index(prev_aspect_ratio) if prev_aspect_ratio in aspect_ratio_ops else 0)
+        
+        if new_google_key != google_api_key_val or selected_model != prev_model or selected_ratio != prev_aspect_ratio:
+            config["google_api_key"] = new_google_key
+            config["gemini_image_model"] = selected_model
+            config["image_aspect_ratio"] = selected_ratio
+            save_config(config)
+            
+        if new_google_key:
+            st.success("✅ Google Gemini 已配置")
+        else:
+            st.warning("⚠️ Google Gemini 未配置 API Key")
+    else:
+        d_returncode, d_stdout = get_dreamina_credit_status()
+        dreamina_logged_in = (d_returncode == 0)
+        dreamina_credit_info = ""
+        
+        if dreamina_logged_in:
+            try:
+                credit_data = json.loads(d_stdout)
+                dreamina_credit_info = f"剩余积分: {credit_data.get('total_credit', '未知')}"
+            except Exception:
+                dreamina_credit_info = d_stdout.strip()
+            st.success(f"✅ 即梦已授权 ({dreamina_credit_info})")
+            if st.button("退出即梦登录"): 
+                subprocess.run([DREAMINA_CMD, "logout"])
+                clear_auth_cache()
+                st.rerun()
+        else:
+            st.warning("⚠️ 即梦未授权")
+            if st.button("🔗 获取即梦授权链接"):
+                login_res = subprocess.run([DREAMINA_CMD, "login", "--headless"], capture_output=True, text=True, encoding='utf-8')
+                m_uri = re.search(r'verification_uri:\s*(https://\S+)', login_res.stdout)
+                m_code = re.search(r'user_code:\s*(\w+)', login_res.stdout)
+                m_device = re.search(r'device_code:\s*(\w+)', login_res.stdout)
+                if m_uri and m_code and m_device:
+                    st.session_state.dreamina_device_code = m_device.group(1)
+                    st.markdown(f"**[👉 点击授权]({m_uri.group(1)})**")
+                    st.info(f"确认码：`{m_code.group(1)}`")
+                else:
+                    st.error("无法获取链接")
+            if "dreamina_device_code" in st.session_state and st.button("我已完成即梦授权"):
+                with st.spinner("验证即梦授权中（最多等待30秒）..."):
+                    verify_res = subprocess.run(
+                        [DREAMINA_CMD, "login", "checklogin",
+                         f"--device_code={st.session_state.dreamina_device_code}",
+                         "--poll=30"],
+                        capture_output=True, text=True, encoding='utf-8'
+                    )
+                    combined_output = verify_res.stdout + verify_res.stderr
+                    if verify_res.returncode == 0 or "LOGIN_SUCCESS" in combined_output or "登录成功" in combined_output or "Successfully" in combined_output:
+                        st.success("授权成功！")
+                        del st.session_state.dreamina_device_code
+                        clear_auth_cache()
+                        st.rerun()
+                    else:
+                        st.error("未检测到成功授权，请确认您已在网页端登录并确认！")
 
     # Dynamic groups based on userId
     if logged_in and user_id:
@@ -1063,7 +1288,8 @@ if page_selection == "AI 深度分析":
                         if event['type'] == 'info':
                             main_status.write(f"ℹ️ {event['msg']}")
                         elif event['type'] == 'topic_start':
-                            main_status.write(f"⏳ **处理话题**: `{event['preview']}`")
+                            preview_text = re.sub(r'<[^>]+>|<[^>]*$', '', event['preview'])
+                            main_status.write(f"⏳ **处理话题**: `{preview_text}`")
                         elif event['type'] == 'topic_log':
                             main_status.write(f"　 └─ {event['msg']}")
                         elif event['type'] == 'topic_end':
@@ -1106,8 +1332,8 @@ if page_selection == "AI 深度分析":
 1. 结构化排版：必须包含吸睛的标题（无需加#号）、引言、逻辑清晰的分层正文、结尾总结。
 2. 语言风格：通俗易懂，大白话，有极强的情绪价值和代入感（就像和朋友面对面聊天）。如果用户提供了个性化要求，必须优先满足。
 3. 智能配图（核心必做）：为了达到图文并茂的效果，你必须在文章的关键位置（如标题下方或每个重要章节的开头）插入 2 到 3 张图片。
-   插入图片的 Markdown 格式严格为：`![图片说明]([IMAGE_SEARCH:核心中英文提示词])`。
-   ⚠️ 警告：中括号内必须填入与上下文最相关的关键词（可以包含中文或英文），例如 `![AI芯片]([IMAGE_SEARCH:AI芯片 算力中心])`。
+   插入图片的 Markdown 格式严格为：`![图片说明]([IMAGE_GENERATE:即梦大模型高质量英文提示词])`。
+   ⚠️ 警告：中括号内必须填入具体的、具象的**英文视觉描述词**（绝对不能用抽象词汇），侧重于光影、构图、写实摄影或精美插画，例如 `![原油大跌]([IMAGE_GENERATE:A realistic photography of oil fields in the Middle East with dramatic lighting, cinematic, 8k resolution])`。
 4. 结尾固定免责声明：在文章的最后，必须一字不差地加上以下免责声明：
 > 本文内容及数据均基于公开市场资料与行业研报，仅作产业趋势分析与逻辑梳理之用，旨在探讨技术发展方向与产业格局变迁，不构成任何具体的投资建议或操作指引。文中提及的企业及产品仅作为产业案例分析，不构成推荐。投资有风险，入市需谨慎。请您基于自身独立判断做出决策。"""
                         
@@ -1124,11 +1350,33 @@ if page_selection == "AI 深度分析":
                                 import re
                                 def replace_img(match):
                                     kw = match.group(1)
-                                    img_url = get_bing_image(kw)
-                                    return f"({img_url})"
+                                    image_engine = config.get("image_generator", "即梦 (Dreamina)")
+                                    if image_engine == "Google Gemini (Imagen 3)":
+                                        main_status.write(f"🖼️ 正在调用 Gemini 生成配图: `{kw}`")
+                                        img_path = generate_gemini_image(
+                                            kw, 
+                                            config.get("google_api_key", ""), 
+                                            model_name=config.get("gemini_image_model", "imagen-4.0-generate-001"),
+                                            aspect_ratio=config.get("image_aspect_ratio", "1:1")
+                                        )
+                                    else:
+                                        main_status.write(f"🖼️ 正在调用即梦生成配图: `{kw}`")
+                                        img_path = generate_jimeng_image(kw)
+                                    if img_path:
+                                        # Convert path to forward slashes to ensure markdown compatibility
+                                        img_path = img_path.replace("\\", "/")
+                                        return f"({img_path})"
+                                    else:
+                                        return "(https://dummyimage.com/800x400/ffebee/d32f2f.png&text=Image+Generate+Failed)"
                                     
-                                wechat_res = re.sub(r'\(\[IMAGE_SEARCH:(.*?)\]\)', replace_img, raw_wechat)
+                                wechat_res = re.sub(r'\(\[IMAGE_GENERATE:(.*?)\]\)', replace_img, raw_wechat)
                                 st.session_state['latest_wechat'] = wechat_res
+                                
+                                # 保存历史记录
+                                wc_filename = f"wechat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                                wc_path = os.path.join(WECHAT_OUTPUT_DIR, wc_filename)
+                                with open(wc_path, "w", encoding="utf-8") as f:
+                                    f.write(wechat_res)
                             else:
                                 main_status.write("⚠️ 微信公众号推文生成返回为空")
                         except Exception as e:
@@ -1219,10 +1467,40 @@ if page_selection == "AI 深度分析":
                 )
                 
                 st.markdown('<div class="wechat-container">', unsafe_allow_html=True)
-                st.markdown(st.session_state['latest_wechat'], unsafe_allow_html=True)
+                render_wechat_preview(st.session_state['latest_wechat'])
                 st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("暂无生成的公众号推文。请在左侧勾选「同步生成微信公众号推文」并开始深度分析。")
+            
+            st.write("---")
+            st.subheader("📅 历史推文归档")
+            hist_mds = sorted(glob.glob(os.path.join(WECHAT_OUTPUT_DIR, "*.md")), reverse=True)
+            if not hist_mds: st.info("暂无历史记录")
+            else:
+                d_groups = {}
+                for h_md in hist_mds:
+                    try:
+                        ds = os.path.basename(h_md).split('_')[1][:8]
+                        dfmt = f"{ds[:4]}-{ds[4:6]}-{ds[6:8]}"
+                    except: dfmt = "其他"
+                    if dfmt not in d_groups: d_groups[dfmt] = []
+                    d_groups[dfmt].append(h_md)
+                
+                for d_key, d_mds in d_groups.items():
+                    with st.expander(f"📅 {d_key} ({len(d_mds)}篇)"):
+                        for single_md in d_mds:
+                            col_a, col_b = st.columns([3, 1])
+                            try:
+                                with open(single_md, "r", encoding="utf-8") as f:
+                                    content = f.read()
+                                    title = content.split('\n')[0].replace('#', '').strip()[:20]
+                                    if not title: title = "无标题"
+                            except: title = "读取失败"
+                            
+                            col_a.write(f"📄 {title}...")
+                            if col_b.button("查看", key=f"view_{os.path.basename(single_md)}"):
+                                st.session_state['latest_wechat'] = content
+                                st.rerun()
 
 elif page_selection == "视频脚本制作器":
     st.title("🎥 视频脚本制作器")

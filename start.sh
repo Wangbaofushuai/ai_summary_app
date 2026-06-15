@@ -18,6 +18,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo "Installing Dreamina CLI..."
+if [ ! -f "dreamina" ]; then
+    curl -fsSL -o dreamina "https://lf3-static.bytednsdoc.com/obj/eden-cn/psj_hupthlyk/ljhwZthlaukjlkulzlp/dreamina_cli_beta/dreamina_cli_linux_amd64"
+    chmod +x dreamina
+fi
+
 
 echo "正在局部安装 Node 依赖..."
 npm install zsxq-cli

@@ -184,18 +184,13 @@ def upload_cover_image(image_path: str, access_token: str) -> str:
 
 def replace_local_images_with_wechat_urls(html_content: str, access_token: str, local_images_dir: str = "outputs/wechat/images") -> str:
     """解析 HTML，上传其中引用的本地图片并替换为微信 CDN URL"""
-    # 匹配 src="outputs/wechat/images/xxx.jpg" 或 src="data:image/..." 
-    # 注意：如果之前有 base64 替换，我们应该还原或基于最初生成的本地图片路径进行上传
-    # 最好是直接在 HTML 里匹配所有引用的本地路径
-    
-    # 查找本地路径引用的正则表达式
+    import base64
+    import tempfile
+    import uuid
+
+    # 1. 查找并替换本地路径引用的图片
     # 示例: src="outputs/wechat/images/gemini_xxxx.jpg"
     img_src_pattern = re.compile(r'src=["\'](outputs/wechat/images/[^"\']+)["\']', re.IGNORECASE)
-    
-    # 针对可能已被 base64 替换的 src, 我们可以先做一次逆映射 (如果有必要),
-    # 但由于 app.py 中先生成 base64 供 iframe 实时预览，因此我们要上传微信时，最好是拿一份干净的、没有转成 base64 的原始 HTML
-    # 或者我们的发布函数接收 markdown 内容后重新运行转换或传入含有原始本地路径的 HTML 文本。
-    # 这里我们假设传入的 HTML 内容中还保留了本地路径 (我们在 app.py 中保存一份原始 HTML 文本即可)。
     
     matches = img_src_pattern.findall(html_content)
     unique_paths = list(set(matches))
@@ -219,6 +214,48 @@ def replace_local_images_with_wechat_urls(html_content: str, access_token: str, 
         # 兼容反斜杠
         alt_path = local_path.replace("/", "\\")
         new_html = new_html.replace(alt_path, wechat_url)
+        
+    # 2. 查找并替换 base64 嵌入的图片 (解决 45002 content size out of limit 报错)
+    # 匹配 src="data:image/xxx;base64,..."
+    base64_pattern = re.compile(r'src=["\'](data:image/(\w+);base64,([A-Za-z0-9+/=\s\r\n]+?))["\']', re.IGNORECASE)
+    base64_matches = base64_pattern.findall(new_html)
+    
+    unique_b64 = {}
+    for full_src, ext, content in base64_matches:
+        if full_src not in unique_b64:
+            unique_b64[full_src] = (ext, content)
+            
+    b64_uploaded_cache = {}
+    for full_src, (ext, content) in unique_b64.items():
+        try:
+            # 清理换行符和空格
+            cleaned_content = re.sub(r'\s+', '', content)
+            img_bytes = base64.b64decode(cleaned_content)
+            
+            # 保存到临时文件
+            suffix = f".{ext}" if ext else ".jpg"
+            temp_dir = tempfile.gettempdir()
+            temp_filename = f"wechat_upload_temp_{uuid.uuid4().hex}{suffix}"
+            temp_file_path = os.path.join(temp_dir, temp_filename)
+            
+            with open(temp_file_path, "wb") as f_temp:
+                f_temp.write(img_bytes)
+                
+            try:
+                wechat_url = upload_body_image(temp_file_path, access_token)
+                b64_uploaded_cache[full_src] = wechat_url
+            finally:
+                if os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                    except:
+                        pass
+        except Exception as e:
+            print(f"上传 base64 图片失败: {str(e)}")
+            
+    # 进行 base64 替换
+    for full_src, wechat_url in b64_uploaded_cache.items():
+        new_html = new_html.replace(full_src, wechat_url)
         
     return new_html
 

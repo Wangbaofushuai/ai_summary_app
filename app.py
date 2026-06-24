@@ -521,7 +521,139 @@ def render_wechat_preview(md_text):
             if part.strip():
                 st.markdown(part, unsafe_allow_html=True)
 
+def make_preview_html(html_raw):
+    """为 Streamlit 预览将 HTML 中的本地图片路径转换为 base64 编码，解决 sandbox iframe 限制"""
+    import re
+    import os
+    import base64
+    if not html_raw:
+        return html_raw
+    def replace_src(match):
+        prefix = match.group(1)
+        src = match.group(2)
+        if not src.startswith("http") and not src.startswith("data:") and os.path.exists(src):
+            try:
+                with open(src, "rb") as f_f:
+                    b64 = base64.b64encode(f_f.read()).decode()
+                ext = os.path.splitext(src)[1].lower().replace(".", "")
+                if ext == "jpg": ext = "jpeg"
+                return f'{prefix}="data:image/{ext};base64,{b64}"'
+            except:
+                pass
+        return match.group(0)
+    return re.sub(r'(src)=["\']([^"\']+)["\']', replace_src, html_raw, flags=re.IGNORECASE)
+
+def post_process_wechat_html(html_raw, theme, title_color=None):
+    import re
+    if not html_raw:
+        return html_raw
+        
+    accent_color = "#d97758"  # 默认暖橙 (autumn-warm)
+    title_color_default = "#4a413d"   # 默认大标题字色 (黑褐)
+    if theme == "spring-fresh":
+        accent_color = "#6b9b7a"  # 嫩绿
+        title_color_default = "#3d4a3d"   # 深绿灰
+    elif theme == "ocean-calm":
+        accent_color = "#4a7c9b"  # 蔚蓝
+        title_color_default = "#3a4150"   # 深蓝灰
+        
+    t_color = title_color if title_color else title_color_default
+
+    # 重点强调 (strong/b) 字色强制高亮为主题强调色，并转化为 span 标签以防止微信编辑器强制脱落加粗样式
+    def highlight_strong(match):
+        tag = match.group(1)
+        attrs = match.group(2) or ""
+        content = match.group(3)
+        if 'style=' in attrs or 'style =' in attrs:
+            def repl_style(m):
+                style_content = m.group(2)
+                # 滤除原先可能带有的任何 color 声明和 font-weight 声明
+                style_content = re.sub(r'color\s*:\s*[^;]+;?', '', style_content).strip()
+                style_content = re.sub(r'font-weight\s*:\s*[^;]+;?', '', style_content).strip()
+                # 拼装新的主题色与强力加粗
+                return f'style="{style_content}; color: {accent_color}; font-weight: bold !important;"'
+            new_attrs = re.sub(r'style\s*=\s*(["\'])(.*?)(\1)', repl_style, attrs)
+        else:
+            new_attrs = attrs + f' style="color: {accent_color}; font-weight: bold !important;"'
+        return f'<span{new_attrs}>{content}</span>'
+
+    html_raw = re.sub(r'<(strong|b)(\s+[^>]*?)?>(.*?)</\1>', highlight_strong, html_raw, flags=re.IGNORECASE | re.DOTALL)
+
+    # 自动将所有 h1-h6 标题内部的文本用 <span> 包裹，以在微信后台强制保留颜色与粗体样式，并去除默认下划线
+    def wrap_headings_in_span(match):
+        tag = match.group(1).lower()
+        attrs = match.group(2) or ""
+        content = match.group(3)
+        
+        # 默认标题的大小和行高
+        default_sizes = {
+            'h1': '24px',
+            'h2': '20px',
+            'h3': '18px',
+            'h4': '16px',
+            'h5': '15px',
+            'h6': '14px'
+        }
+        size_val = default_sizes.get(tag, '16px')
+        
+        # 1. 确保 h 标签本身具有 font-weight: bold !important; 和 text-decoration: none !important;
+        # 以及默认的 font-size 和 line-height (如果原样式中没有设定)
+        if 'style=' in attrs or 'style =' in attrs:
+            def repl_h_style(m):
+                style_content = m.group(2)
+                # 统一清理现有的 text-decoration 和 font-weight 声明，以防冲突
+                style_content = re.sub(r'text-decoration\s*:\s*[^;]+;?', '', style_content).strip()
+                style_content = re.sub(r'font-weight\s*:\s*[^;]+;?', '', style_content).strip()
+                
+                # 检查是否包含 font-size 和 line-height
+                extra_styles = []
+                if 'font-size' not in style_content:
+                    extra_styles.append(f"font-size: {size_val}")
+                if 'line-height' not in style_content:
+                    extra_styles.append("line-height: 1.5")
+                    
+                style_content_str = style_content
+                if not style_content_str.endswith(';') and style_content_str:
+                    style_content_str += ';'
+                    
+                extra_str = "; ".join(extra_styles) + ";" if extra_styles else ""
+                
+                return f'style="{style_content_str} {extra_str} text-decoration: none !important; font-weight: bold !important;"'
+            new_attrs = re.sub(r'style\s*=\s*(["\'])(.*?)(\1)', repl_h_style, attrs)
+        else:
+            new_attrs = attrs + f' style="font-size: {size_val}; line-height: 1.5; text-decoration: none !important; font-weight: bold !important;"'
+            
+        # 2. 对 content 里的文本进行包装：
+        # 如果 content 里已经含有 span 标签，我们把 span 标签内的 style 里的 font-weight 强行替换为 font-weight: bold !important;
+        # 并且将 font-size 也强行注入/替换为对应的标题大小，确保微信不会覆盖 span 内的字体大小！
+        if '<span' in content.lower():
+            def repl_span_style(m_span):
+                span_attrs = m_span.group(1) or ""
+                span_content = m_span.group(2)
+                if 'style=' in span_attrs or 'style =' in span_attrs:
+                    def repl_inner_style(m_inner):
+                        inner_style = m_inner.group(2)
+                        inner_style = re.sub(r'font-weight\s*:\s*[^;]+;?', '', inner_style).strip()
+                        inner_style = re.sub(r'font-size\s*:\s*[^;]+;?', '', inner_style).strip()
+                        return f'style="{inner_style}; font-weight: bold !important; font-size: {size_val} !important;"'
+                    new_span_attrs = re.sub(r'style\s*=\s*(["\'])(.*?)(\1)', repl_inner_style, span_attrs)
+                else:
+                    new_span_attrs = span_attrs + f' style="font-weight: bold !important; font-size: {size_val} !important;"'
+                return f'<span{new_span_attrs}>{span_content}</span>'
+            
+            new_content = re.sub(r'<span(\s+[^>]*?)?>(.*?)</span>', repl_span_style, content, flags=re.IGNORECASE | re.DOTALL)
+            return f'<{tag}{new_attrs}>{new_content}</{tag}>'
+        else:
+            c = t_color if tag == 'h1' else accent_color
+            return f'<{tag}{new_attrs}><span style="color: {c}; font-size: {size_val} !important; font-weight: bold !important; text-decoration: none !important;">{content}</span></{tag}>'
+
+    html_raw = re.sub(r'<(h[1-6])(\s+[^>]*?)?>(.*?)</\1>', wrap_headings_in_span, html_raw, flags=re.IGNORECASE | re.DOTALL)
+    return html_raw
+
 def convert_to_wechat_html(md_text, theme, mode_ui, api_key=None, font_size="medium", bg_type="none", chan_config=None, custom_prompt="", for_wechat_api=False):
+    # 强制微信转换函数输出干净的包含原始本地路径的 HTML 格式数据，不在转换内部处理 base64
+    for_wechat_api = True
+    
     import subprocess
     import json
     import re
@@ -541,10 +673,13 @@ def convert_to_wechat_html(md_text, theme, mode_ui, api_key=None, font_size="med
     mode = "api" if "API" in mode_ui else "ai"
     
     accent_color = "#d97758"  # 默认暖橙 (autumn-warm)
+    title_color = "#4a413d"   # 默认大标题字色 (黑褐)
     if theme == "spring-fresh":
         accent_color = "#6b9b7a"  # 嫩绿
+        title_color = "#3d4a3d"   # 深绿灰
     elif theme == "ocean-calm":
         accent_color = "#4a7c9b"  # 蔚蓝
+        title_color = "#3a4150"   # 深蓝灰
     
     # 提取首个标题并进行安全长度截断（不超过 32 个字符）
     title = "技术分析报告"
@@ -722,7 +857,7 @@ def convert_to_wechat_html(md_text, theme, mode_ui, api_key=None, font_size="med
 2. 你必须将主标题 H1 的所有内容，包裹在一个独立的白色卡片容器中，其内联样式（style）必须严格设为：`{card_style}`，使其在视觉上呈现出与下文卡片相同的“悬浮卡片”质感。
 3. 卡片容器内的元素必须严格按照以下顺序排列，并保证完美居中对齐：
    - 顶部分类眉标（Eyebrow）：在标题正上方放置一行小字，内容为“行业深度解析 | INDUSTRY ANALYSIS”，样式为：`font-size: 13px; color: {eyebrow_color}; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 12px; font-weight: bold; text-align: center;`，居中。
-   - 中间大标题：在眉标下方。使用 `<h1>` 标签，样式为：`font-size: 26px; line-height: 1.4; color: {title_color}; font-weight: bold; margin: 10px 0; font-family: 'Georgia', 'Source Serif Pro', serif; text-align: center;`，居中对齐。
+   - 中间大标题：在眉标下方。使用 `<h1>` 标签，样式为：`font-size: 26px; line-height: 1.4; color: {title_color}; font-weight: bold; margin: 10px 0; font-family: 'Georgia', 'Source Serif Pro', serif; text-align: center; text-decoration: none;`，居中对齐。
    - 底部装饰短线：在标题正下方，居中放置一个装饰短横线：`<div style="margin: 15px auto 5px auto; width: 50px; height: 2px; background-color: {accent_color};"></div>`，用于与标题外部的其他正文卡片进行优雅的视觉区隔。
 4. 确保 H1 卡片的宽度自适应，且其外层没有任何其他的嵌套卡片容器包裹。
 
@@ -745,19 +880,20 @@ def convert_to_wechat_html(md_text, theme, mode_ui, api_key=None, font_size="med
                 chan_config.get("selected_model"),
                 [
                     {"role": "system", "content": (
-                        "You are a professional WeChat push designer. You must return only a valid, complete HTML page. "
+                        "You are a professional WeChat push designer. You must return only a clean HTML fragment (or body content only) with inline CSS. "
                         "Strictly do not wrap it in any comments or explanations, just raw HTML or markdown-fenced HTML code blocks.\n"
                         "【排版设计美化强力指示（至关重要）】:\n"
-                        "1. 必须使用丰富的内联样式（inline CSS）为推文进行色彩与板块美化设计。\n"
+                        "1. 必须使用丰富的内联样式（inline CSS）为推文进行色彩与板块美化设计。严格禁止使用任何 <style> 标签或 CSS class 选择器，所有样式必须直接写在每个元素的 style=\"...\" 内联属性中，因为微信公众号后台会剥离外部 style 样式表。\n"
                         "2. 必须包含大量精心美化的组件与样式元素，例如：\n"
                         "   - 带有柔和浅色背景色（如浅橘、淡绿、浅蓝等）、圆角（border-radius: 8px或12px）和阴影（box-shadow: 0 4px 12px rgba(0,0,0,0.05)）的卡片式展示盒子（cards）。\n"
                         "   - 带有左侧粗色条修饰（border-left: 4px solid ...）和淡背景色的引用块（blockquote）。\n"
                         "   - 带有特色标签、图标或彩色背景框的列表项（li）和表格（table）。\n"
                         "   - 加粗并以主题主色高亮的关键字或句段。\n"
-                        "3. 第一个一级大标题（H1）必须设计得极具视觉冲击力，可使用较大字号、居中对齐、彩色背景横带或精致下划线装饰。\n"
-                        "4. 绝不能输出素面朝天、简陋或完全没有美化样式的纯文本 HTML！\n"
-                        "5. 绝对禁止以任何形式增删、改写或缩减原文的段落或字词内容！你的职责仅仅是对文章做 HTML 排版和样式美化包装，必须保留全部文字细节与配图占位符。\n"
-                        "6. 严格禁止在排版生成的 HTML 中出现任何 Emoji 表情符号。如果检测到原文中带有 Emoji，请将其滤除或用等价的文字描述替代。"
+                        "3. 第一个一级大标题（H1）必须设计得极具视觉冲击力，可使用较大字号、居中对齐、网页最顶部，并包含 text-decoration: none !important; 样式以防止微信默认下划线干扰。\n"
+                        "4. 所有一级、二级、三级标题（h1/h2/h3）的 style 属性中，必须包含 text-decoration: none !important;，防止微信默认的下划虚线或实线影响排版美观。\n"
+                        "5. 绝不能输出 html, head, body 等包装标签，直接返回最外层美化用 <div> 容器包裹的网页内容片段。\n"
+                        "6. 绝对禁止以任何形式增删、改写或缩减原文的段落或字词内容！你的职责仅仅是对文章做 HTML 排版和样式美化包装，必须保留全部文字细节与配图占位符。\n"
+                        "7. 严格禁止在排版生成的 HTML 中出现任何 Emoji 表情符号。如果检测到原文中带有 Emoji，请将其滤除或用等价的文字描述替代。"
                     )},
                     {"role": "user", "content": ai_prompt}
                 ],
@@ -773,6 +909,22 @@ def convert_to_wechat_html(md_text, theme, mode_ui, api_key=None, font_size="med
                 html_raw = html_raw.split("```html")[1].split("```")[0].strip()
             elif "```" in html_raw:
                 html_raw = html_raw.split("```")[1].split("```")[0].strip()
+
+            # 物理清洗 HTML 标签，只保留正文部分以防微信 API 剥离外部 style 导致无样式
+            # 1. 剥离 style 和 head 块
+            html_raw = re.sub(r'<style[^>]*>.*?</style>', '', html_raw, flags=re.DOTALL | re.IGNORECASE)
+            html_raw = re.sub(r'<head[^>]*>.*?</head>', '', html_raw, flags=re.DOTALL | re.IGNORECASE)
+            # 2. 提取 body 内正文
+            body_match = re.search(r'<body[^>]*>(.*?)</body>', html_raw, re.DOTALL | re.IGNORECASE)
+            if body_match:
+                html_raw = body_match.group(1).strip()
+            else:
+                # 3. 如果没有 body，去除 html, doctype 等外层包装标签
+                html_raw = re.sub(r'<!DOCTYPE[^>]*>', '', html_raw, flags=re.IGNORECASE)
+                html_raw = re.sub(r'<html[^>]*>', '', html_raw, flags=re.IGNORECASE)
+                html_raw = re.sub(r'</html>', '', html_raw, flags=re.IGNORECASE)
+                html_raw = html_raw.strip()
+
                 
             # Replace image placeholders
             images_list = res_data.get("data", {}).get("images") or []
@@ -921,24 +1073,7 @@ def convert_to_wechat_html(md_text, theme, mode_ui, api_key=None, font_size="med
     emoji_pattern = re.compile(r'[\U00010000-\U0010ffff]', flags=re.UNICODE)
     html_raw = emoji_pattern.sub('', html_raw)
     
-    # 重点强调 (strong/b) 字色强制高亮为主题强调色
-    def highlight_strong(match):
-        tag = match.group(1)
-        attrs = match.group(2) or ""
-        content = match.group(3)
-        if 'style=' in attrs or 'style =' in attrs:
-            def repl_style(m):
-                style_content = m.group(2)
-                # 滤除原先可能带有的任何 color 声明
-                style_content = re.sub(r'color\s*:\s*[^;]+;?', '', style_content).strip()
-                # 拼装新的主题色
-                return f'style="{style_content}; color: {accent_color}; font-weight: bold;"'
-            new_attrs = re.sub(r'style\s*=\s*(["\'])(.*?)(\1)', repl_style, attrs)
-        else:
-            new_attrs = attrs + f' style="color: {accent_color}; font-weight: bold;"'
-        return f'<{tag}{new_attrs}>{content}</{tag}>'
-
-    html_raw = re.sub(r'<(strong|b)(\s+[^>]*?)?>(.*?)</\1>', highlight_strong, html_raw, flags=re.IGNORECASE)
+    html_raw = post_process_wechat_html(html_raw, theme, title_color=title_color)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_raw)
@@ -1961,9 +2096,13 @@ with st.sidebar:
                         with c3:
                             st.caption(f"📱 **微信推文**：{'开启' if ui_state.get('use_wechat') else '关闭'}")
                             st.caption(f"🎨 **排版模式**：{ui_state.get('wechat_mode', 'AI模式')}")
+                            if ui_state.get('use_wechat'):
+                                st.caption(f"🚀 **发布模式**：{ui_state.get('wechat_publish_mode', '仅生成本地文件 (不上传)')}")
                         with c4:
                             st.caption(f"🍁 **排版主题**：{ui_state.get('wechat_theme', 'spring-fresh')}")
                             st.caption(f"📐 **字号/背景**：{ui_state.get('wechat_font_size', 'medium')} / {ui_state.get('wechat_background_type', 'none')}")
+                            if ui_state.get('use_wechat'):
+                                st.caption(f"🎯 **发布账号**：{ui_state.get('wechat_publish_account', '未指定')}")
                     else:
                         st.json(ui_state)
                     st.divider()
@@ -1985,8 +2124,33 @@ with st.sidebar:
             
             if is_published:
                 st.error(f"⚠️ **防重群发拦截**：该文章已于 `{draft_info.get('publish_time', '此前')}` 正式群发到公众号，不可重复操作！")
+                if st.button("🔓 解除群发锁定并允许重新发布", use_container_width=True):
+                    wechat_publisher.save_draft_info(
+                        filepath,
+                        draft_info.get("media_id"),
+                        draft_info.get("url"),
+                        status="draft",
+                        publish_time=""
+                    )
+                    st.success("已成功解除群发锁定！")
+                    st.rerun()
             elif is_scheduled:
                 st.info(f"📅 **定时发布中**：该文章已排期于 `{draft_info.get('scheduled_time', '未来')}` 自动定时群发。")
+                if st.button("🔓 取消定时发布并解除锁定", use_container_width=True):
+                    try:
+                        job_id = f"schedule_publish_{draft_info.get('media_id')}"
+                        st.session_state.scheduler.remove_job(job_id)
+                    except Exception as e:
+                        pass
+                    wechat_publisher.save_draft_info(
+                        filepath,
+                        draft_info.get("media_id"),
+                        draft_info.get("url"),
+                        status="draft",
+                        scheduled_time=""
+                    )
+                    st.success("已成功取消定时并解除锁定！")
+                    st.rerun()
             
             if "wechat_draft_media_id" not in st.session_state or st.session_state.wechat_draft_media_id is None:
                 st.session_state.wechat_draft_media_id = draft_info.get("media_id")
@@ -2148,18 +2312,24 @@ with st.sidebar:
                         try:
                             token = wechat_publisher.get_access_token(active_account["appid"], active_account["secret"])
                             
-                            raw_html = convert_to_wechat_html(
-                                st.session_state['latest_wechat'],
-                                st.session_state.get('latest_wechat_rendered_theme', 'spring-fresh'),
-                                st.session_state.get('latest_wechat_rendered_mode', 'AI 模式 (免费)'),
-                                api_key=config.get("md2wechat_api_key", ""),
-                                font_size=config.get("wechat_font_size", "medium"),
-                                bg_type=config.get("wechat_background_type", "none"),
-                                chan_config=current_chan_config,
-                                custom_prompt=config.get("wechat_custom_prompt", ""),
-                                for_wechat_api=True
-                            )
+                            # 优先重用已经预览生成好的 HTML 缓存，保证内容/加粗重点字/排版与本地预览 100% 绝对一致
+                            if st.session_state.get('latest_wechat_html_raw'):
+                                raw_html = st.session_state['latest_wechat_html_raw']
+                            else:
+                                raw_html = convert_to_wechat_html(
+                                    st.session_state['latest_wechat'],
+                                    st.session_state.get('latest_wechat_rendered_theme', 'spring-fresh'),
+                                    st.session_state.get('latest_wechat_rendered_mode', 'AI 模式 (免费)'),
+                                    api_key=config.get("md2wechat_api_key", ""),
+                                    font_size=config.get("wechat_font_size", "medium"),
+                                    bg_type=config.get("wechat_background_type", "none"),
+                                    chan_config=current_chan_config,
+                                    custom_prompt=config.get("wechat_custom_prompt", ""),
+                                    for_wechat_api=True
+                                )
                             
+                            theme_now = st.session_state.get('latest_wechat_rendered_theme', 'spring-fresh')
+                            raw_html = post_process_wechat_html(raw_html, theme_now)
                             final_html = wechat_publisher.replace_local_images_with_wechat_urls(raw_html, token)
                             cover_media_id = wechat_publisher.upload_cover_image(selected_cover_path, token)
                             draft_media_id = wechat_publisher.create_draft(
@@ -3039,7 +3209,8 @@ if page_selection == "AI 深度分析":
                                     custom_prompt=custom_prompt
                                 )
                                 
-                                st.session_state['latest_wechat_html'] = html_res
+                                st.session_state['latest_wechat_html_raw'] = html_res
+                                st.session_state['latest_wechat_html'] = make_preview_html(html_res)
                                 st.session_state['latest_wechat_rendered_theme'] = theme
                                 st.session_state['latest_wechat_rendered_mode'] = mode_ui
                                 
@@ -3183,7 +3354,8 @@ if page_selection == "AI 深度分析":
                             chan_config=current_chan_config, 
                             custom_prompt=custom_prompt
                         )
-                        st.session_state['latest_wechat_html'] = html_res
+                        st.session_state['latest_wechat_html_raw'] = html_res
+                        st.session_state['latest_wechat_html'] = make_preview_html(html_res)
                         st.session_state['latest_wechat_rendered_theme'] = preview_theme
                         st.session_state['latest_wechat_rendered_mode'] = preview_mode
                         
@@ -3330,7 +3502,11 @@ if page_selection == "AI 深度分析":
                                 html_p = single_md.replace(".md", ".html")
                                 if os.path.exists(html_p):
                                     with open(html_p, "r", encoding="utf-8") as hf:
-                                        st.session_state['latest_wechat_html'] = hf.read()
+                                        raw_html = hf.read()
+                                        theme_now = st.session_state.get('latest_wechat_rendered_theme', 'spring-fresh')
+                                        raw_html = post_process_wechat_html(raw_html, theme_now)
+                                        st.session_state['latest_wechat_html_raw'] = raw_html
+                                        st.session_state['latest_wechat_html'] = make_preview_html(raw_html)
                                     st.session_state['just_loaded_history'] = True
                                 else:
                                     st.session_state['latest_wechat_html'] = None

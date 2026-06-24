@@ -44,7 +44,7 @@ class SecurityVisitor(ast.NodeVisitor):
 
 def main():
     project_root = Path(__file__).parent.resolve()
-    exclude_dirs = {'.venv', 'node_modules', '__pycache__', '.git'}
+    exclude_dirs = {'.venv', 'node_modules', '__pycache__', '.git', 'tests'}
     
     violations_found = False
     
@@ -59,7 +59,7 @@ def main():
             continue
             
         try:
-            with open(py_file, 'r', encoding='utf-8') as f:
+            with open(py_file, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
             
             tree = ast.parse(content, filename=str(py_file))

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "skills": {
+    "skill-creator": {
+      "name": "Skill Creator",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=skill-creator",
+      "source": "community",
+      "version": "0.1.0",
+      "installedAt": "2026-06-15T08:31:49Z"
+    },
+    "self-improving": {
+      "name": "Self-Improving + Proactive Agent",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=self-improving",
+      "source": "community",
+      "version": "1.2.16",
+      "installedAt": "2026-06-16T03:33:51Z"
+    },
+    "self-improving-agent": {
+      "name": "self-improving agent",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=self-improving-agent",
+      "source": "community",
+      "version": "3.0.23",
+      "installedAt": "2026-06-16T03:37:24Z"
+    },
+    "agent-memory": {
+      "name": "Agent Memory",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=agent-memory",
+      "source": "community",
+      "version": "1.0.0",
+      "installedAt": "2026-06-16T03:38:39Z"
+    }
+  }
+}

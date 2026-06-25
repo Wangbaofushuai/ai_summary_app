@@ -373,7 +373,36 @@ def publish_draft(access_token: str, media_id: str) -> str:
         err_code = data.get("errcode", -1)
         raise Exception(f"正式发布草稿失败: {err_msg} (码: {err_code})")
 
-def save_draft_info(md_filepath: str, media_id: str, url: str, status: str = "draft", publish_time: str = None, scheduled_time: str = None, appid: str = None, secret: str = None):
+def mass_send_draft(access_token: str, media_id: str) -> str:
+    """一键正式群发草稿箱的文章 (向全部粉丝群发，有频次限制)"""
+    url = f"https://api.weixin.qq.com/cgi-bin/message/mass/sendall?access_token={access_token}"
+    body = {
+        "filter": {
+            "is_to_all": True
+        },
+        "mpnews": {
+            "media_id": media_id
+        },
+        "msgtype": "mpnews",
+        "send_ignore_reprint": 0
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    
+    with httpx.Client(timeout=20.0) as client:
+        res = client.post(url, headers=headers, content=payload)
+        res.raise_for_status()
+        data = res.json()
+        
+    if data.get("errcode", 0) == 0:
+        return str(data.get("msg_id") or data.get("msg_data_id") or "mass_sent")
+    else:
+        err_msg = data.get("errmsg", "群发失败")
+        err_code = data.get("errcode", -1)
+        raise Exception(f"正式群发草稿失败: {err_msg} (码: {err_code})")
+
+def save_draft_info(md_filepath: str, media_id: str, url: str, status: str = "draft", publish_time: str = None, scheduled_time: str = None, appid: str = None, secret: str = None, publish_mode: str = None):
     """保存微信草稿信息（MediaID 和预览 URL）到对应的 .draft.json 关联文件中"""
     if not md_filepath:
         return
@@ -404,6 +433,8 @@ def save_draft_info(md_filepath: str, media_id: str, url: str, status: str = "dr
         data["appid"] = appid
     if secret is not None:
         data["secret"] = secret
+    if publish_mode is not None:
+        data["publish_mode"] = publish_mode
         
     with open(draft_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -422,11 +453,13 @@ def load_draft_info(md_filepath: str) -> dict:
             return {}
     return {}
 
-def auto_publish_to_wechat(md_filepath: str, html_filepath: str, account_config: dict, publish_mode: str) -> dict:
-    """自动化一键处理微信草稿创建和正式发布流程（供定时任务使用）
+def auto_publish_to_wechat(md_filepath: str, html_filepath: str, account_config: dict, publish_mode: str, author: str = "") -> dict:
+    """自动化一键处理微信草稿创建和正式发布/群发流程（供定时任务使用）
     publish_mode:
         - "自动保存至微信草稿箱"
         - "自动保存草稿并正式发布"
+        - "自动保存草稿并‘发布’ (不推送，不占群发额度，主页历史看不到)"
+        - "自动保存草稿并‘群发’ (推送给所有粉丝，占用群发额度，主页可见，超限自动降级)"
     """
     if not os.path.exists(md_filepath) or not os.path.exists(html_filepath):
         raise FileNotFoundError("找不到指定的 Markdown 或 HTML 文件")
@@ -502,7 +535,7 @@ def auto_publish_to_wechat(md_filepath: str, html_filepath: str, account_config:
     cover_media_id = upload_cover_image(cover_path, token)
     
     # 创建草稿箱
-    draft_media_id = create_draft(token, title, "AI 架构师", digest, final_html, cover_media_id)
+    draft_media_id = create_draft(token, title, author, digest, final_html, cover_media_id)
     
     # 获取预览链接
     draft_url = get_draft_url(token, draft_media_id)
@@ -516,9 +549,29 @@ def auto_publish_to_wechat(md_filepath: str, html_filepath: str, account_config:
         "publish_id": None
     }
     
-    # 4. 执行正式发布（可选）
-    if publish_mode == "自动保存草稿并正式发布":
+    # 4. 执行正式发布/群发（可选）
+    is_publish_mode = publish_mode in [
+        "自动保存草稿并正式发布", 
+        "自动保存草稿并‘发布’ (不推送，不占群发额度，主页历史看不到)"
+    ]
+    is_mass_send_mode = publish_mode == "自动保存草稿并‘群发’ (推送给所有粉丝，占用群发额度，主页可见，超限自动降级)"
+    
+    if is_publish_mode:
         publish_id = publish_draft(token, draft_media_id)
         result["publish_id"] = publish_id
+    elif is_mass_send_mode:
+        try:
+            # 尝试调用群发接口
+            publish_id = mass_send_draft(token, draft_media_id)
+            result["publish_id"] = publish_id
+        except Exception as e:
+            # 群发报错，自动降级为“发布”，确保文章能发出去且有日志记录
+            print(f"[警告] 微信定时群发报错: {str(e)}。已自动启用安全自愈防线：降级为【发布】发布推文。")
+            try:
+                publish_id = publish_draft(token, draft_media_id)
+                result["publish_id"] = publish_id
+                result["fallback_to_publish"] = True
+            except Exception as e_inner:
+                raise Exception(f"群发失败且降级为发布时同样失败: {str(e_inner)}") from e
 
     return result

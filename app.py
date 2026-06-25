@@ -1280,6 +1280,7 @@ def run_scheduled_wechat_publish(draft_file_path: str):
         secret = data.get("secret")
         url = data.get("url")
         status = data.get("status")
+        publish_mode = data.get("publish_mode", "publish")  # "mass_send" 或 "publish"
         
         if not media_id or not appid or not secret:
             write_cron_log(f"[定时群发公众号] 错误：JSON 数据不全 (media_id: {media_id}, appid: {appid})")
@@ -1293,17 +1294,26 @@ def run_scheduled_wechat_publish(draft_file_path: str):
         write_cron_log(f"[定时群发公众号] 正在获取 Access Token (AppID: {appid[:6]}...)")
         token = wechat_publisher.get_access_token(appid, secret)
         
-        # 2. 正式发布
-        write_cron_log(f"[定时群发公众号] 正在正式发布 MediaID: {media_id} ...")
-        pub_id = wechat_publisher.publish_draft(token, media_id)
+        # 2. 正式群发 / 发布
+        if publish_mode == "mass_send":
+            write_cron_log(f"[定时群发公众号] 正在正式群发 MediaID: {media_id} ...")
+            try:
+                pub_id = wechat_publisher.mass_send_draft(token, media_id)
+                write_cron_log(f"[定时群发公众号] 成功：已正式群发！消息ID: {pub_id}")
+            except Exception as e:
+                write_cron_log(f"[定时群发公众号] 警告：正式群发报错 ({str(e)})，已自动启用安全降级发布兜底防线...")
+                pub_id = wechat_publisher.publish_draft(token, media_id)
+                write_cron_log(f"[定时群发公众号] 成功：降级发布成功！发布ID: {pub_id}")
+        else:
+            write_cron_log(f"[定时群发公众号] 正在正式发布 MediaID: {media_id} (不推送) ...")
+            pub_id = wechat_publisher.publish_draft(token, media_id)
+            write_cron_log(f"[定时群发公众号] 成功：已正式发布！发布ID: {pub_id}")
         
         # 3. 更新状态
         data["status"] = "published"
         data["publish_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(draft_file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-            
-        write_cron_log(f"[定时群发公众号] 成功：已正式发布！发布ID: {pub_id}")
         
     except Exception as e:
         write_cron_log(f"[定时群发公众号] 异常崩溃：{str(e)}\n{traceback.format_exc()}")
@@ -1434,15 +1444,20 @@ def run_scheduled_deep_analysis():
                         
                     if active_account:
                         try:
+                            pub_author = ui_state.get("wechat_publish_author", cfg.get("wechat_publish_author", ""))
                             pub_res = wechat_publisher.auto_publish_to_wechat(
                                 wc_path, 
                                 html_path, 
                                 active_account, 
-                                pub_mode
+                                pub_mode,
+                                author=pub_author
                             )
                             write_cron_log(f"[AI 深度分析] 微信自动发布成功！MediaID: {pub_res.get('media_id')}")
                             if pub_res.get("publish_id"):
-                                write_cron_log(f"[AI 深度分析] 微信已提交正式发布，PublishID: {pub_res.get('publish_id')}")
+                                if pub_res.get("fallback_to_publish"):
+                                    write_cron_log(f"[AI 深度分析] ⚠️ 微信群发超额/报错，已自动安全降级为【发布】(主页历史不可见)，ID: {pub_res.get('publish_id')}")
+                                else:
+                                    write_cron_log(f"[AI 深度分析] 微信正式发布/群发成功！ID/PublishID: {pub_res.get('publish_id')}")
                         except Exception as pub_err:
                             write_cron_log(f"[AI 深度分析] 微信自动发布失败 (不重试): {str(pub_err)}")
                     else:
@@ -2237,7 +2252,7 @@ with st.sidebar:
                 parsed_title = parsed_title[:32]
                 
             meta_title = st.text_input("推文标题 (微信要求 ≤ 32字)", value=parsed_title)
-            meta_author = st.text_input("作者名称 (建议 ≤ 8字)", value="AI 架构师")
+            meta_author = st.text_input("作者名称 (建议 ≤ 8字)", value=config.get("wechat_publish_author", ""))
             
             # 强健地过滤各种 markdown 图片格式（兼容空格及换行）
             clean_text = re.sub(r'!\[[^\]]*\]\s*\([^)]*\)', '', latest_wechat)
@@ -2410,7 +2425,17 @@ with st.sidebar:
                     st.write("**正式发布**")
                     st.warning("⚠️ 正式发布为不可逆的群发操作，将对所有关注者可见！")
                     
-                    enable_schedule = st.checkbox("定时群发（不勾选则立即群发）", key="wechat_enable_schedule", disabled=is_published)
+                    publish_action_type = st.radio(
+                        "发布类型选择",
+                        ["群发 (推送粉丝，主页可见，占额度)", 
+                         "发布 (仅生成永久链接，不推送，主页历史看不到)"],
+                        index=0,
+                        disabled=is_published,
+                        key="wechat_publish_action_type"
+                    )
+                    chosen_action = "mass_send" if "群发" in publish_action_type else "publish"
+                    
+                    enable_schedule = st.checkbox("定时发布（不勾选则立即执行）", key="wechat_enable_schedule", disabled=is_published)
                     
                     sched_dt = None
                     if enable_schedule:
@@ -2423,9 +2448,9 @@ with st.sidebar:
                         
                         sched_dt = dt_module.datetime.combine(sched_date, sched_time)
                         
-                    confirm_publish = st.checkbox("我已确认扫码预览无误，同意正式群发", disabled=is_published)
+                    confirm_publish = st.checkbox("我已确认扫码预览无误，同意正式发布/群发", disabled=is_published)
                     
-                    btn_label = "⏰ 安排定时发布" if enable_schedule else "3️⃣ 正式群发到公众号"
+                    btn_label = "⏰ 安排定时发布" if enable_schedule else ("3️⃣ 正式群发到公众号" if chosen_action == "mass_send" else "3️⃣ 正式发布到公众号 (仅生成链接)")
                     
                     if st.button(btn_label, use_container_width=True, type="primary", disabled=(not confirm_publish) or is_published):
                         if enable_schedule and sched_dt:
@@ -2436,7 +2461,7 @@ with st.sidebar:
                             else:
                                 with st.spinner("正在安排定时发布..."):
                                     try:
-                                        # 1. 保存状态为 scheduled 并记入 scheduled_time
+                                        # 1. 保存状态为 scheduled 并记入 scheduled_time 与 publish_mode
                                         wechat_publisher.save_draft_info(
                                             filepath,
                                             st.session_state.wechat_draft_media_id,
@@ -2444,7 +2469,8 @@ with st.sidebar:
                                             status="scheduled",
                                             scheduled_time=sched_dt.strftime("%Y-%m-%d %H:%M:%S"),
                                             appid=active_account["appid"],
-                                            secret=active_account["secret"]
+                                            secret=active_account["secret"],
+                                            publish_mode=chosen_action
                                         )
                                         # 2. 注册定时任务到 BackgroundScheduler
                                         job_id = f"schedule_publish_{st.session_state.wechat_draft_media_id}"
@@ -2464,17 +2490,21 @@ with st.sidebar:
                                             args=[draft_json_path],
                                             id=job_id
                                         )
-                                        st.session_state.wechat_publish_result = f"📅 定时群发任务已成功设置！安排在 `{sched_dt.strftime('%Y-%m-%d %H:%M:%S')}` 自动执行。请保持系统后台运行。"
+                                        st.session_state.wechat_publish_result = f"📅 定时任务已成功设置！安排在 `{sched_dt.strftime('%Y-%m-%d %H:%M:%S')}` 自动执行（模式：{'群发' if chosen_action == 'mass_send' else '仅发布'}）。请保持系统后台运行。"
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"❌ 设置定时发布失败: {str(e)}")
                         else:
-                            # 立即群发
-                            with st.spinner("正在群发中，请稍候..."):
+                            # 立即群发 / 发布
+                            with st.spinner("正在发送中，请稍候..."):
                                 try:
                                     token = wechat_publisher.get_access_token(active_account["appid"], active_account["secret"])
-                                    pub_id = wechat_publisher.publish_draft(token, st.session_state.wechat_draft_media_id)
-                                    st.session_state.wechat_publish_result = f"🚀 文章已正式群发！发布 ID: `{pub_id}`。您可在公众平台后台查看群发状态。"
+                                    if chosen_action == "mass_send":
+                                        pub_id = wechat_publisher.mass_send_draft(token, st.session_state.wechat_draft_media_id)
+                                        st.session_state.wechat_publish_result = f"🚀 文章已正式群发！消息 ID: `{pub_id}`。您可在公众平台后台查看群发状态。"
+                                    else:
+                                        pub_id = wechat_publisher.publish_draft(token, st.session_state.wechat_draft_media_id)
+                                        st.session_state.wechat_publish_result = f"🚀 文章已正式发布！发布 ID: `{pub_id}`。您已通过「发布」发表，可使用链接分享。"
                                     
                                     # 更新为已发布状态
                                     if filepath:
@@ -2482,7 +2512,8 @@ with st.sidebar:
                                             filepath, 
                                             st.session_state.wechat_draft_media_id, 
                                             st.session_state.wechat_draft_url, 
-                                            status="published"
+                                            status="published",
+                                            publish_mode=chosen_action
                                         )
                                     st.rerun()
                                 except Exception as e:
@@ -2836,6 +2867,7 @@ with st.sidebar:
                         "wechat_prompt": st.session_state.get("da_wechat_prompt", ""),
                         "wechat_publish_mode": st.session_state.get("da_wechat_publish_mode", "仅生成本地文件 (不上传)"),
                         "wechat_publish_account": st.session_state.get("da_wechat_publish_account", ""),
+                        "wechat_publish_author": st.session_state.get("da_wechat_publish_author", ""),
                         "selected_group": config.get("selected_group", "默认群组")
                     }
                 elif page_selection == "视频脚本制作器":
@@ -2975,8 +3007,17 @@ if page_selection == "AI 深度分析":
                 st.rerun()
                 
             # 定时自动发布模式
-            wechat_pub_modes = ["仅生成本地文件 (不上传)", "自动保存至微信草稿箱", "自动保存草稿并正式发布"]
+            wechat_pub_modes = [
+                "仅生成本地文件 (不上传)", 
+                "自动保存至微信草稿箱", 
+                "自动保存草稿并‘发布’ (不推送，不占群发额度，主页历史看不到)", 
+                "自动保存草稿并‘群发’ (推送给所有粉丝，占用群发额度，主页可见，超限自动降级)"
+            ]
             prev_pub_mode = config.get("wechat_publish_mode", "仅生成本地文件 (不上传)")
+            # 兼容老配置选项
+            if prev_pub_mode == "自动保存草稿并正式发布":
+                prev_pub_mode = "自动保存草稿并‘发布’ (不推送，不占群发额度，主页历史看不到)"
+                
             selected_pub_mode = st.selectbox(
                 "定时任务微信发布模式",
                 wechat_pub_modes,
@@ -2996,9 +3037,20 @@ if page_selection == "AI 深度分析":
                 key="da_wechat_publish_account"
             )
             
-            if selected_pub_mode != prev_pub_mode or selected_pub_acc != prev_pub_acc:
+            # 微信发布默认作者
+            prev_pub_author = config.get("wechat_publish_author", "")
+            selected_pub_author = st.text_input(
+                "定时任务/发布默认作者 (不填则不显示)",
+                value=prev_pub_author,
+                key="da_wechat_publish_author"
+            )
+            
+            if (selected_pub_mode != prev_pub_mode or 
+                selected_pub_acc != prev_pub_acc or 
+                selected_pub_author != prev_pub_author):
                 config["wechat_publish_mode"] = selected_pub_mode
                 config["wechat_publish_account"] = selected_pub_acc
+                config["wechat_publish_author"] = selected_pub_author
                 save_config(config)
 
         wechat_prompt = ""

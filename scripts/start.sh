@@ -6,6 +6,9 @@ cd "$(dirname "$0")/.."
 # Playwright 浏览器库存入项目内（不污染宿主机 ~/.cache）
 export PLAYWRIGHT_BROWSERS_PATH="$PWD/.browsers"
 mkdir -p .browsers
+# HOME 重定向至项目内: dreamina/zsxq-cli/streamlit 的配置与认证全部封装在项目内
+export HOME="$PWD/.home"
+mkdir -p .home
 # 运行数据目录（新机器 clone 后不存在）
 mkdir -p config outputs
 

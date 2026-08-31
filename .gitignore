@@ -10,6 +10,7 @@ tests/
 config/
 bin/
 .browsers/
+.home/
 dreamina
 dreamina.exe
 .dreamina_cli/

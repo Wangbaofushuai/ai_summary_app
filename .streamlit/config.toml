@@ -1,0 +1,6 @@
+# 项目级 Streamlit 配置（随仓库分发，项目内生效）
+[browser]
+gatherUsageStats = false
+
+[server]
+fileWatcherType = "none"

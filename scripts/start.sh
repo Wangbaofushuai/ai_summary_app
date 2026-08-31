@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 # Playwright 浏览器库存入项目内（不污染宿主机 ~/.cache）
 export PLAYWRIGHT_BROWSERS_PATH="$PWD/.browsers"
 mkdir -p .browsers
+# 运行数据目录（新机器 clone 后不存在）
+mkdir -p config outputs
 
 # 服务端口：可由环境变量 PORT 或 --port <num> 覆盖（默认 3100，避开宿主其他服务）
 PORT="${PORT:-3100}"

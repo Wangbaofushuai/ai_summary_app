@@ -42,26 +42,33 @@ do_start() {
         echo "⚠️  服务已在运行中，无需重复启动。"
         return 0
     fi
-    echo "🚀 正在启动服务（依赖检查与安装由 start.sh 自动完成）..."
+    echo "🚀 正在启动服务（首次安装/更新依赖可能需要数分钟，期间自动显示安装日志）..."
     nohup ./scripts/start.sh >> "$PANEL_LOG" 2>&1 &
     detect_pid=$!
-    for i in $(seq 1 15); do
+    elapsed=0
+    while [ $elapsed -lt 480 ]; do
         if is_running; then
-            sleep 1
+            sleep 2
             echo "✅ 启动成功"
             panel_info
-            echo "📄 上次启动日志: outputs/man_panel.log"
+            echo "📄 完整日志: outputs/man_panel.log"
             return 0
         fi
         if ! kill -0 $detect_pid 2>/dev/null; then
-            echo "❌ 启动进程已退出（可能依赖安装失败），查看: $PANEL_LOG"
-            tail -20 "$PANEL_LOG"
+            echo "❌ 启动进程已退出（依赖安装失败），日志末尾如下:"
+            tail -25 "$PANEL_LOG"
             return 1
         fi
-        sleep 1
+        sleep 5
+        elapsed=$((elapsed + 5))
+        if [ $((elapsed % 20)) -eq 0 ]; then
+            echo ""
+            echo "⏳ 安装/启动进行中 (${elapsed}s)... 最近日志:"
+            tail -4 "$PANEL_LOG" 2>/dev/null
+        fi
     done
-    echo "❌ 启动超时，查看: $PANEL_LOG"
-    tail -20 "$PANEL_LOG"
+    echo "❌ 启动超时（480 秒），日志末尾如下:"
+    tail -25 "$PANEL_LOG"
     return 1
 }
 

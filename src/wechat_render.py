@@ -5,7 +5,6 @@ import subprocess
 import json
 import base64
 
-NPX_CMD = "npx.cmd" if os.name == "nt" else "npx"
 
 def markdown_to_docx_file(md_text, filepath, indicator_name="本指标"):
     from docx import Document

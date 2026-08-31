@@ -10,7 +10,6 @@ import markdown
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-DREAMINA_CMD = "dreamina.exe" if sys.platform == "win32" else "./dreamina"
 WECHAT_IMAGES_DIR = os.path.join("outputs", "wechat", "images")
 IMAGE_OUTPUT_DIR = os.path.join("outputs", "images")
 

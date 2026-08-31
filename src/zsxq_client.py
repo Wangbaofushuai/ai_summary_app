@@ -7,7 +7,6 @@ import httpx
 import llm
 from config_store import get_exec_env as _get_exec_env
 
-NPX_CMD = "npx.cmd" if os.name == "nt" else "npx"
 
 def fetch_zsxq(group_id, limit=3, scope="all", progress_callback=None):
     if not group_id:

@@ -8,8 +8,12 @@ outputs/
 node_modules/
 tests/
 config/
+bin/
+.browsers/
 dreamina
 dreamina.exe
 .dreamina_cli/
 cat.jpg
 test_cat.jpg
+AGENTS.md
+.learnings/

@@ -25,8 +25,9 @@ if %errorlevel% neq 0 (
 )
 
 echo Installing Dreamina CLI...
-if not exist "dreamina.exe" (
-    curl.exe -fLo dreamina.exe https://lf3-static.bytednsdoc.com/obj/eden-cn/psj_hupthlyk/ljhwZthlaukjlkulzlp/dreamina_cli_beta/dreamina_cli_windows_amd64.exe
+if not exist "bin" mkdir bin
+if not exist "bin\dreamina.exe" (
+    curl.exe -fLo bin\dreamina.exe https://lf3-static.bytednsdoc.com/obj/eden-cn/psj_hupthlyk/ljhwZthlaukjlkulzlp/dreamina_cli_beta/dreamina_cli_windows_amd64.exe
 )
 
 echo Checking Node dependencies...

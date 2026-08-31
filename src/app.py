@@ -20,6 +20,7 @@ import prompts
 import image_engine
 import wechat_render
 import llm
+from cli_paths import NPX_CMD, DREAMINA_CMD
 import zsxq_client
 import scheduler
 from config_store import (load_config, save_config, get_exec_env, load_indicators, save_indicator, delete_indicator)
@@ -30,8 +31,6 @@ import llm
 import importlib
 importlib.reload(wechat_publisher)
 
-NPX_CMD = "npx.cmd" if sys.platform == "win32" else "npx"
-DREAMINA_CMD = "dreamina.exe" if sys.platform == "win32" else "./dreamina"
 
 # --- Config & Constants ---
 IMAGE_OUTPUT_DIR = os.path.join("outputs", "images")

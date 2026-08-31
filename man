@@ -1,0 +1,4 @@
+#!/bin/bash
+# 根目录快捷命令: ./man ==> scripts/man.sh (非交互子命令透传)
+__dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+exec bash "$__dir/scripts/man.sh" "$@"

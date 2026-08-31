@@ -17,7 +17,6 @@ import wechat_publisher
 import zsxq_client
 from config_store import load_config as _load_config, load_indicators as _load_indicators, get_exec_env as _get_exec_env
 
-NPX_CMD = "npx.cmd" if os.name == "nt" else "npx"
 WECHAT_OUTPUT_DIR = os.path.join("outputs", "wechat")
 SCRIPT_OUTPUT_DIR = os.path.join("outputs", "scripts")
 INDICATOR_DOCS_DIR = os.path.join("outputs", "indicator_docs")

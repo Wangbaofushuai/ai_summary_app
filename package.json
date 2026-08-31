@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@geekjourneyx/md2wechat": "^2.5.0",
+    "zsxq-cli": "^0.4.9"
+  }
+}

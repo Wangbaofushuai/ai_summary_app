@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.env
+outputs/
+*~
+*.log
+*.sqlite3
+node_modules/
+tests/
+config/
+dreamina
+dreamina.exe
+.dreamina_cli/
+cat.jpg
+test_cat.jpg

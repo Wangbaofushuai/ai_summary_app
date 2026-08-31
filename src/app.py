@@ -1359,7 +1359,7 @@ if page_selection == "AI 深度分析":
                 # 启动后台工作线程
                 import threading
                 worker_thread = threading.Thread(
-                    target=run_manual_deep_analysis_worker,
+                    target=scheduler.run_manual_deep_analysis_worker,
                     args=(
                         curr_group_id, l_limit, s_key, current_chan_config, a_mode, 
                         use_p_ui, cp_text, use_wechat, also_generate_report, 

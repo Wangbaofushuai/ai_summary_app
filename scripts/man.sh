@@ -17,9 +17,19 @@ PANEL_LOG="outputs/man_panel.log"
 is_running() { pgrep -f "$APP_PATTERN" >/dev/null 2>&1; }
 
 get_public_ip() {
-    pub=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null)
-    [ -n "$pub" ] && echo "$pub" && return
-    hostname -I 2>/dev/null | awk '{print $1}'
+    # 实时读取主机网卡 IP（跟随机器变化），过滤回环/容器内网网段
+    local ip
+    ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(127\.|10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)' | head -1)
+    # 容器网卡也可能是唯一地址，放宽取第一个非回环地址
+    if [ -z "$ip" ]; then
+        ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^127\.' | head -1)
+    fi
+    # 全部失败时用公网出口 IP 兜底
+    if [ -z "$ip" ]; then
+        ip=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null)
+    fi
+    [ -n "$ip" ] && echo "$ip" && return
+    echo "127.0.0.1"
 }
 
 panel_info() {
@@ -92,6 +102,8 @@ do_stop() {
     return 0
 }
 
+is_tty() { [ -t 0 ] && [ -t 1 ]; }
+
 do_update() {
     echo "🔄 正在从远程仓库更新代码..."
     if git pull --ff-only origin main 2>&1; then
@@ -99,13 +111,17 @@ do_update() {
         echo "→ 检查并安装新增依赖（不启动服务）..."
         ./scripts/start.sh --deps-only
         if is_running; then
-            echo "ℹ️  服务正在运行中，旧代码需重启生效。"
-            echo -n "是否立即重启服务? (y/N): "
-            read -r ans
-            case "$ans" in
-                y|Y|yes|YES) do_stop && do_start;;
-                *) echo "已保留运行中的旧实例，稍后可手动执行 1) 启动 完成重启。";;
-            esac
+            if is_tty; then
+                echo "ℹ️  服务正在运行中，旧代码需重启生效。"
+                echo -n "是否立即重启服务? (y/N): "
+                read -r ans
+                case "$ans" in
+                    y|Y|yes|YES) do_stop && do_start;;
+                    *) echo "已保留运行中的旧实例，稍后可手动执行 1) 启动 完成重启。";;
+                esac
+            else
+                echo "ℹ️  服务正在运行中（非交互环境），请稍后执行: ./man restart"
+            fi
         fi
     else
         echo "❌ 更新失败（可能本地有未提交改动），请检查 git status。"

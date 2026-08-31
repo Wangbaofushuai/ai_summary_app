@@ -15,6 +15,7 @@ import prompts
 import wechat_render
 import wechat_publisher
 import zsxq_client
+from cli_paths import NPX_CMD
 from config_store import load_config as _load_config, load_indicators as _load_indicators, get_exec_env as _get_exec_env
 
 WECHAT_OUTPUT_DIR = os.path.join("outputs", "wechat")

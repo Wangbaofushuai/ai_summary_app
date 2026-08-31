@@ -7,6 +7,7 @@ import time
 import uuid
 import httpx
 import markdown
+from cli_paths import DREAMINA_CMD
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 

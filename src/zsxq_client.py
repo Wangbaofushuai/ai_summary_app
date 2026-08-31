@@ -5,6 +5,7 @@ import subprocess
 import time
 import httpx
 import llm
+from cli_paths import NPX_CMD
 from config_store import get_exec_env as _get_exec_env
 
 

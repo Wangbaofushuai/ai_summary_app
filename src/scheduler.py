@@ -212,8 +212,7 @@ def run_manual_deep_analysis_worker(curr_group_id, l_limit, s_key, current_chan_
                     save_manual_task_state(status="error", error=wc_reason)
                     return
 
-                raw_wechat = image_engine.ensure_image_prompts_exist(raw_wechat)
-                raw_wechat = image_engine.adjust_markdown_images_placement(raw_wechat)
+                raw_wechat = image_engine.normalize_article_images(raw_wechat)
                 
                 def replace_img(match):
                     if check_stop(): return ""
@@ -449,8 +448,7 @@ def run_scheduled_deep_analysis(ignore_auto_run: bool = False):
                 return
 
             # 保底补全配图提示词标记并进行排版微调
-            raw_wechat = image_engine.ensure_image_prompts_exist(raw_wechat)
-            raw_wechat = image_engine.adjust_markdown_images_placement(raw_wechat)
+            raw_wechat = image_engine.normalize_article_images(raw_wechat)
             
             def replace_img(match):
                 kw = match.group(1).strip()

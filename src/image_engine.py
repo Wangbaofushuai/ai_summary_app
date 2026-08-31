@@ -311,3 +311,100 @@ def render_to_image(summary_text, mode_name):
         browser.close()
     return output_path
 
+
+
+def _sanitize_english_prompt(text: str) -> str:
+    """仅保留英文单词/数字/常用符号，杜绝中文（会被 Gemini 渲染成图内文字）"""
+    tokens = re.findall(r'[A-Za-z]{2,}|\d{2,}', text)
+    kept = []
+    for t in tokens:
+        if t not in kept:
+            kept.append(t)
+        if len(' '.join(kept)) > 60:
+            break
+    if not kept:
+        return ""
+    return ' '.join(kept)
+
+
+def normalize_article_images(md_text: str) -> str:
+    """
+    配图规范化为「每个标题段正好 1 张 + 紧随标题下 + prompt 全英文」：
+    1. 以 markdown 标题 (# / ## 等) 切分段落；
+    2. 段内存在多张 IMAGE_GENERATE 图时，仅保留紧随标题位置的第一张，其余删除（杜绝一段多图）；
+    3. 段落无配图时，自动在标题下补一张（尾部总结段同样覆盖）；
+    4. prompt 强制英文：优先取 LLM 原生英文提示词清洗，仅含中文时降级为通用英文主题词。
+    """
+    if not md_text:
+        return md_text
+
+    lines = md_text.split('\n')
+    segments = []          # [(heading_index, lines)]
+    current_heading = None
+    cur_lines = []
+    for i, line in enumerate(lines):
+        if line.strip().startswith('#'):
+            if current_heading is not None:
+                segments.append((current_heading, cur_lines))
+            current_heading = i
+            cur_lines = [line]
+        else:
+            if current_heading is None:
+                continue   # 正文先于首个标题，丢弃（微信推文必有 H1）
+            cur_lines.append(line)
+    if current_heading is not None:
+        segments.append((current_heading, cur_lines))
+
+    img_tag_re = re.compile(r'!\[.*?\]\s*\(\[IMAGE_GENERATE:(.*?)\]\)', re.DOTALL)
+    bare_tag_re = re.compile(r'!\[.*?\]\s*\(([^)]*IMAGE_GENERATE[^)]*)\)', re.DOTALL)
+
+    def extract_prompt(line):
+        m = img_tag_re.search(line)
+        if m:
+            return m.group(1).strip()
+        m = bare_tag_re.search(line)
+        if m:
+            inner = m.group(1)
+            m2 = re.search(r'IMAGE_GENERATE:\s*(.*)', inner)
+            if m2:
+                return m2.group(1).strip().rstrip(']')
+        return ""
+
+    new_lines = []
+    for heading_idx, seg_lines in segments:
+        heading = seg_lines[0].strip()
+        title_clean = re.sub(r'^#+\s*', '', heading).strip()
+        body = seg_lines[1:]
+        # 收集段内图片行
+        img_lines = []
+        body_no_images = []
+        for line in body:
+            if 'IMAGE_GENERATE' in line or bare_tag_re.search(line):
+                img_lines.append(line)
+            else:
+                body_no_images.append(line)
+        # 段内第一张图的 prompt（原生，优先）
+        raw_prompt = ""
+        first_img_line = None
+        for line in img_lines:
+            p = extract_prompt(line)
+            if p:
+                raw_prompt = p
+                first_img_line = line
+                break
+        # 英文清洗
+        eng_prompt = _sanitize_english_prompt(raw_prompt) if raw_prompt else ""
+        if len(eng_prompt.split()) < 3:
+            fallback = _sanitize_english_prompt(title_clean)
+            eng_prompt = fallback if len(fallback.split()) >= 2 else "global industry dynamics, technology and financial sector"
+        if "cinematic lighting" not in eng_prompt.lower():
+            eng_prompt += ", technology and financial aesthetic, cinematic lighting, 8k resolution, photorealistic"
+        img_line = f'![{title_clean[:20]}]([IMAGE_GENERATE:{eng_prompt}])'
+        # 输出: 标题 + 恰好一张图 + 其余正文
+        new_lines.append(heading)
+        new_lines.append(img_line)
+        while body_no_images and not body_no_images[0].strip():
+            body_no_images.pop(0)
+        new_lines.extend(body_no_images)
+
+    return '\n'.join(new_lines)

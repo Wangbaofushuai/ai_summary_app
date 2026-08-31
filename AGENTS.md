@@ -88,6 +88,7 @@
 * **[.gitignore](file:///f:/Jack/KaiFa/ai_summary_app/.gitignore)**：Git 忽略规则（`.venv/`、`node_modules/`、`outputs/`、`tests/`、`config/`、Dreamina 二进制等）。
 * **[.gitattributes](file:///f:/Jack/KaiFa/ai_summary_app/.gitattributes)**：强制 `*.sh` 使用 LF 换行符，杜绝 CRLF 导致服务器端脚本崩溃。
 * **[AGENTS.md](file:///f:/Jack/KaiFa/ai_summary_app/AGENTS.md)**：项目唯一 AI 开发规则手册（详见第 11 章）。
+* **Git 远程仓库**：`git@github.com:Wangbaofushuai/ai_summary_app.git`（Deploy Key 专用密钥 `/root/.ssh/ai_summary_app_ed25519`，认证配置存仓库级 `core.sshCommand`，不污染全局）。服务器项目目录为唯一真理源，推送即部署基线。
 
 ### 隔离存储目录
 * **outputs/**：运行期输出。`outputs/wechat/`（推文 `*.md`/`*.html`/`.draft.json`）、`outputs/wechat/images/`（推文配图 `gemini_*.jpg`/`jimeng_*.jpg` + 长图）、`outputs/images/`（摘要长图 `summary_*.png`）、`outputs/scripts/`（短视脚本 `script_*.md`）、`outputs/indicator_docs/`（指标合规/社群手册 `*.md`/`*.docx`）、`outputs/cron_execution.log`/`manual_execution.log`/`manual_task_state.json`（Cron 与手动任务日志/状态）。

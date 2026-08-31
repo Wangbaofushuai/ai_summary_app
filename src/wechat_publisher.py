@@ -250,7 +250,7 @@ def replace_local_images_with_wechat_urls(html_content: str, access_token: str, 
                 if os.path.exists(temp_file_path):
                     try:
                         os.remove(temp_file_path)
-                    except:
+                    except Exception:
                         pass
         except Exception as e:
             print(f"上传 base64 图片失败: {str(e)}")

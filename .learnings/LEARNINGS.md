@@ -58,3 +58,16 @@
 - **事实**：根目录当时仅剩 `package.json`/`package-lock.json`/`requirements.txt` 三个清单；用户问"为什么不整合"。
 - **决策**：`requirements.txt` 零约束 → 移入 `scripts/requirements.txt`（start.sh/start.bat 引用路径同步）；`package.json`/`package-lock.json` 与 `node_modules/` 三体绑定（npx 从 cwd 向上解析、app.py 共 10 处 `npx zsxq-cli/md2wechat` 调用），用户确认**保持现状**——整合须改 10 处调用为显式 `.bin/` 路径并双端兼顾，且无法离线验证授权链路，不建议零散插队执行。
 - **教训**：Node 生态下"依赖清单/锁定文件/安装产物"必须同目录，这是 npx 解析的硬约束，在目录整洁与运行稳定冲突时优先保持稳定。
+
+## 14. Git 仓库初始化 + Deploy Key + AGENTS.md 精简
+- **事实**：远程仓库在 GitHub（历史版本为旧 Windows 时代状态，含已删除的 skills/规则副本/旧布局），服务器无任何 GitHub 凭据、旧 1panel SSH 密钥未授权。
+- **方案**：`https` 匿名可读但无写权限（`could not read Username`）；协作者需账号级权限；**Deploy keys 是单仓库自动推送的标准做法**——本地新生成专属密钥 `~/.ssh/ai_summary_app_ed25519`，用户添加为 Write-authorized Deploy Key，仓库级配置 `git config core.sshCommand "ssh -i ..."` + remote 换 ssh URL（不碰全局配置，符合宿主机零污染）。
+- **执行**：本地 init(main) + 纯净基线提交（14 文件，`.gitignore` 已屏蔽 config/、outputs/、tests/、.venv/、node_modules/）→ `git push --force` 覆盖远程旧历史（远程旧文件全是不再需要的垃圾，rebase 反而会把它们带回本地）。
+- **规则精简**：AGENTS.md 重构为 13 章紧凑版（合并跨平台重述章、删除 Artifact/task.md/walkthrough.md 等平台特有要求、技能体系缩为一句、保留全部硬约束与用户核心诉求：目录整洁/宿主机零污染/资源盘点/变更合规）。
+
+## 15. 四阶段模块化重构完成
+- **动因**：app.py 4374 行上帝模块（62 函数、6 个超 120 行函数、17 处裸 except、615 处 st.* 交织），结构臃肿但无死代码/无环依赖，适合机械拆分。
+- **拆分**（AST 按函数精确提取，零手抄错误）：`prompts.py`(提示词)/`image_engine.py`(双引擎生图+长图+图片保底)/`wechat_render.py`(md2wechat+html 后处理+docx)/`llm.py`(completion/摘要/解析)/`zsxq_client.py`(fetch_zsxq+附件解析)/`scheduler.py`(APScheduler+3 定时 worker+手动 worker+任务状态)/`config_store.py`(config/indicators 读写+代理 env 统一)。
+- **关键坑**：① worker 与 scheduled 函数内发现局部变量 `image_engine = config.get(...)` 会遮蔽模块名——全局前缀化自动替换曾引入事故，迁移时必须重命名局部变量；② `get_scheduler` 原用 `@st.cache_resource`，模块化后改懒加载单例（scheduler 不能 import app.py，app 是 streamlit 脚本）；③ config/indicators 读写被 3 处复制，统一入 config_store 后零行为差异。
+- **成果**：app.py 4374→2148 行；18 处裸 `except:` → `except Exception:`；新增 16 个核心单测全通过；每阶段守卫+smoke test(3999 headless)+进程清理。
+- **验证**：守卫 PASS、单测 16/16、smoke 启动正常、无残留进程。

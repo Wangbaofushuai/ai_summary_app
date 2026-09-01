@@ -43,6 +43,7 @@ panel_info() {
     fi
     IP=$(get_public_ip)
     [ -n "$IP" ] && echo "   访问地址 : http://${IP}:${PORT}" || echo "   访问地址 : 无法获取外网 IP，请尝试本机 http://127.0.0.1:${PORT}"
+    echo "   数据占用 : $(du -sh outputs 2>/dev/null | cut -f1) (可用'6 清理'释放)"
     echo "==============================="
 }
 
@@ -196,6 +197,26 @@ do_clean() {
     esac
 }
 
+do_cleanup() {
+    echo "📊 当前产物占用:"
+    du -sh outputs/wechat outputs/wechat/images outputs/images outputs/scripts outputs/indicator_docs 2>/dev/null
+    echo ""
+    echo "以下将被清理【仅清除生成图片与长图缓存】，保留推文 md/html/.draft.json 与文档产物:"
+    echo "   - outputs/wechat/images/  推文配图 (gemini_*.jpg / jimeng_*.jpg / wechat_long_*.png)"
+    echo "   - outputs/images/         摘要长图 (summary_*.png)"
+    echo -n "⚠️  确认清理图片产物? (y/N): "
+    read -r ans
+    case "$ans" in
+        y|Y|yes|YES)
+            find outputs/wechat/images -type f -delete 2>/dev/null
+            find outputs/images -type f -delete 2>/dev/null
+            echo "✅ 清理完成"
+            echo "   清理后占用: $(du -sh outputs 2>/dev/null | cut -f1)"
+            ;;
+        *) echo "❎ 已取消清理。";;
+    esac
+}
+
 # ---------------- 主循环 ----------------
 interactive_loop() {
     while true; do
@@ -203,7 +224,7 @@ interactive_loop() {
         panel_info
         echo "   1) 启动服务          2) 停止服务"
         echo "   3) 重启服务          4) 更新代码与依赖"
-        echo "   5) 卸载安装产物      6) 清理历史产物"
+        echo "   5) 卸载安装产物      6) 清理图片产物"
         echo ""
         echo "   0) 退出面板"
         echo ""
@@ -215,7 +236,7 @@ interactive_loop() {
             3) do_restart;;
             4) do_update;;
             5) do_uninstall;;
-            6) do_clean;;
+            6) do_cleanup;;
             0) echo "👋 再见"; exit 0;;
             *) echo "未识别的选项: $choice";;
         esac
@@ -237,8 +258,8 @@ else
         restart) do_restart;;
         update)  do_update;;
         uninstall) do_uninstall;;
-        clean)   do_clean;;
+        clean)   do_cleanup;;
         status)  do_status;;
-        *) echo "用法: ./man [start|stop|restart|update|uninstall|clean|status] | (无参数进入管理面板)"; exit 1;;
+        *) echo "用法: ./scripts/man.sh [start|stop|restart|update|uninstall|clean|status] | (无参数进入管理面板)"; exit 1;;
     esac
 fi

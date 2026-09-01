@@ -170,6 +170,32 @@ do_restart() {
     do_start
 }
 
+do_clean() {
+    echo "🧹 当前运行产物占用:"
+    du -sh outputs 2>/dev/null || echo "   (outputs 不存在)"
+    files=$(find outputs -type f 2>/dev/null | wc -l)
+    echo "   待清理文件数: ${files}"
+    if [ "$files" -eq 0 ]; then
+        echo "ℹ️  outputs 已是空目录，无需清理。"
+        return 0
+    fi
+    echo -n "⚠️  确认清空 outputs/（推文/配图/长图/脚本/日志全部删除，目录保留）? (y/N): "
+    if is_tty; then
+        read -r ans
+    else
+        ans="N"
+        echo "(非交互环境默认不清理)"
+    fi
+    case "$ans" in
+        y|Y|yes|YES)
+            find outputs -type f -delete
+            mkdir -p outputs/wechat/images outputs/images outputs/scripts outputs/indicator_docs
+            echo "✅ 清理完成（目录骨架已保留）"
+            ;;
+        *) echo "❎ 已取消清理。";;
+    esac
+}
+
 # ---------------- 主循环 ----------------
 interactive_loop() {
     while true; do
@@ -177,11 +203,11 @@ interactive_loop() {
         panel_info
         echo "   1) 启动服务          2) 停止服务"
         echo "   3) 重启服务          4) 更新代码与依赖"
-        echo "   5) 卸载安装产物"
+        echo "   5) 卸载安装产物      6) 清理历史产物"
         echo ""
         echo "   0) 退出面板"
         echo ""
-        echo -n "  请选择操作 [0-5]: "
+        echo -n "  请选择操作 [0-6]: "
         read -r choice
         case "$choice" in
             1) do_start;;
@@ -189,6 +215,7 @@ interactive_loop() {
             3) do_restart;;
             4) do_update;;
             5) do_uninstall;;
+            6) do_clean;;
             0) echo "👋 再见"; exit 0;;
             *) echo "未识别的选项: $choice";;
         esac
@@ -210,7 +237,8 @@ else
         restart) do_restart;;
         update)  do_update;;
         uninstall) do_uninstall;;
+        clean)   do_clean;;
         status)  do_status;;
-        *) echo "用法: ./scripts/man.sh [start|stop|restart|update|uninstall|status] | (无参数进入管理面板)"; exit 1;;
+        *) echo "用法: ./man [start|stop|restart|update|uninstall|clean|status] | (无参数进入管理面板)"; exit 1;;
     esac
 fi

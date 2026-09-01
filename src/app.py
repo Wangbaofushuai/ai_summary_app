@@ -1126,6 +1126,32 @@ with st.sidebar:
 
     if st.button("💾 手动保存所有配置", use_container_width=True): save_config(config); st.success("已保存")
 
+    def _clean_outputs():
+        import glob as _glob
+        dirs = ["outputs", "outputs/wechat", "outputs/wechat/images", "outputs/images",
+                "outputs/scripts", "outputs/indicator_docs"]
+        removed = 0
+        for d in dirs:
+            os.makedirs(d, exist_ok=True)
+            for f in _glob.glob(os.path.join(d, "*")):
+                if os.path.isfile(f):
+                    try:
+                        os.remove(f)
+                        removed += 1
+                    except Exception:
+                        pass
+        return removed
+
+    if st.button("🧹 清理历史产物", use_container_width=True, help="删除 outputs/ 下的推文、图片、脚本与日志，释放磁盘空间"):
+        if st.session_state.get("clean_confirm"):
+            n = _clean_outputs()
+            st.session_state["clean_confirm"] = False
+            st.toast(f"已清理 {n} 个文件", icon="🧹")
+            st.rerun()
+        else:
+            st.session_state["clean_confirm"] = True
+            st.warning("⚠️ 再次点击「🧹 清理历史产物」确认清空（将删除推文/配图/脚本/日志等全部产物）")
+
 # Main Area
 if "show_log_fallback" in st.session_state:
     with st.container(border=True):
